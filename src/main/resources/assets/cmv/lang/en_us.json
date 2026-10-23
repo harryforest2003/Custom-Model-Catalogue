@@ -1,0 +1,9 @@
+{
+  "key.category.cmv.main": "Custom Model Viewer",
+  "key.cmv.open_screen": "Open Custom Model Viewer",
+  "cmv.screen.detail": "Model Details",
+  "cmv.explorer.scanning": "Scanning resource packs...",
+  "cmv.explorer.no_models": "No custom models found in the loaded resource packs",
+  "cmv.explorer.no_matches": "No models match the current filters",
+  "cmv.screen.wrapbank": "Wrap Bank"
+}

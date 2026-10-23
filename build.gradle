@@ -1,0 +1,350 @@
+plugins {
+    // Both of Loom's plugin ids, neither applied yet. They are different
+    // plugins out of the same jar and the choice is not cosmetic:
+    //
+    //   net.fabricmc.fabric-loom  ->  LoomNoRemapGradlePlugin
+    //   fabric-loom               ->  LoomGradlePlugin
+    //
+    // The first is for the unobfuscated era and forces `disableObfuscation`
+    // on, which makes Loom refuse mappings outright — "Cannot use Mojang
+    // mappings in a non-obfuscated environment", thrown before anything is
+    // even downloaded. The second is the remapping Loom, and is what any
+    // version before 26.1 needs. Which one is applied is decided below.
+    id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+    id 'fabric-loom' version "${loom_version}" apply false
+    id 'maven-publish'
+}
+
+// Whether this target's Minecraft ships obfuscated. One fact about the version,
+// with two consequences: which Loom plugin is applied, and whether a mapping
+// set is needed at all. Unobfuscated since 26.1.
+def obfuscated = (project.findProperty('obfuscated') ?: 'false').toString() == 'true'
+apply plugin: obfuscated ? 'fabric-loom' : 'net.fabricmc.fabric-loom'
+
+// ---------------------------------------------------------------------------
+// Which Minecraft version this build is for.
+//
+// Everything version-specific arrives as a project property, so one source tree
+// builds every target. `gradle.properties` holds the default — the version you
+// are developing against — and `versions/*.properties` hold the rest. Passing
+// `-Pminecraft_version=...` on the command line overrides either, which is how
+// `buildAll` builds them one at a time.
+//
+// The version goes in the jar's name, so the jars can sit in one folder without
+// any doubt about which game each is for:
+//
+//     custom-model-viewer-1.0.0+26.2.jar
+// ---------------------------------------------------------------------------
+def mcVersion = project.minecraft_version.toString()
+def javaRelease = Integer.parseInt((project.findProperty('java_release') ?: '25').toString())
+def mcRange = (project.findProperty('minecraft_range') ?: "~${mcVersion}").toString()
+
+version = "${project.mod_version}+${mcVersion}"
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    // Loom adds the Minecraft and Fabric repositories automatically.
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcVersion}"
+
+    // Minecraft has shipped unobfuscated since 26.1, so those builds need no
+    // mapping set at all. Anything earlier does. Mojang's own names rather than
+    // Yarn: every type in this source tree is already named the way Mojang
+    // names it, and Yarn would rename nearly all of them.
+    if (obfuscated) {
+        mappings loom.officialMojangMappings()
+
+        // `modImplementation` rather than `implementation`, because the
+        // remapping Loom has to remap these from intermediary before they are
+        // any use — and it is what puts Mixin on the compile classpath, which
+        // plain `implementation` does not.
+        modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+        modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    } else {
+        // Nothing to remap in an unobfuscated game, and the no-remap plugin
+        // does not offer `modImplementation` at all.
+        implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+        implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Porting by rename table.
+//
+// Almost everything that differs between Minecraft versions, as far as this mod
+// is concerned, is a type that was renamed or moved to another package. Nothing
+// about the mod changes; only what its imports are spelled like.
+//
+// So a target may carry a rename table — versions/<version>.renames — and when
+// it does, the build compiles a rewritten copy of the source rather than the
+// source itself. One line per type:
+//
+//     net.minecraft.client.gui.GuiGraphicsExtractor=net.minecraft.client.gui.GuiGraphics
+//
+// The fully qualified name fixes the import and the simple name is rewritten
+// everywhere it is used, on word boundaries so `ItemTransformThing` is left
+// alone. Adding a version means writing down what it calls things, not keeping
+// a second copy of the mod.
+//
+// A target with no rename table — the version being developed against — is
+// compiled straight from src/main/java and never touches any of this. Behaviour
+// that differs by more than a name belongs in McCompat, which is the one file a
+// version may replace outright.
+// ---------------------------------------------------------------------------
+def renameFile = file("versions/${mcVersion}.renames")
+def portedDir = layout.buildDirectory.dir("ported/${mcVersion}/java").get().asFile
+def portedTools = layout.buildDirectory.dir("ported/${mcVersion}/tools").get().asFile
+
+// Read at configuration time into a plain list, so the rewriting itself needs
+// nothing from the build script but this one value. A Copy.filter closure
+// cannot see script variables — Gradle resolves names against the copy details
+// first — which is why this is done as plain file work rather than a filter.
+def renameTable = []
+if (renameFile.exists()) {
+    renameFile.eachLine("UTF-8") { String line ->
+        def trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith("#")) return
+        int eq = trimmed.indexOf('=')
+        if (eq <= 0) return
+        def from = trimmed.substring(0, eq).trim()
+        def to = trimmed.substring(eq + 1).trim()
+        // Three forms, because three things need renaming and they are not
+        // equally safe to rewrite. See the rewriting below.
+        //   a.b.C=x.y.Z   a type, by qualified name
+        //   ()name=other  a method, only where called or referenced
+        //   name=other    an identifier, wherever it appears
+        def kind = from.startsWith("~") ? 'literal'
+                : from.startsWith("()") ? 'member'
+                : (from.contains('.') ? 'type' : 'word')
+        if (kind == 'member') from = from.substring(2)
+        if (kind == 'literal') from = from.substring(1)
+        renameTable << [kind, from, to]
+    }
+}
+
+def portSources = tasks.register("portSources") {
+    group = 'build'
+    description = "Rewrites the source for Minecraft ${mcVersion}'s names."
+    onlyIf { !renameTable.isEmpty() }
+    inputs.dir("src/main/java")
+    inputs.dir("tools")
+    inputs.property("renames", renameTable.toString())
+    outputs.dir(portedDir)
+    outputs.dir(portedTools)
+    doLast {
+        portedDir.deleteDir()
+        portedTools.deleteDir()
+        // The harnesses are ported too. A jar for a version whose checks never
+        // ran is not a jar anybody has verified, and skipping them on the
+        // versions that most need checking would be exactly backwards.
+        def rewritten = 0
+        [[file("src/main/java"), portedDir], [file("tools"), portedTools]].each { pair ->
+        def src = pair[0]
+        def outDir = pair[1]
+        src.eachFileRecurse { f ->
+            if (!f.isFile()) return
+            def target = new File(outDir, f.absolutePath.substring(src.absolutePath.length() + 1))
+            target.parentFile.mkdirs()
+            if (!f.name.endsWith(".java")) {
+                target.bytes = f.bytes
+                return
+            }
+            def text = f.getText("UTF-8")
+            def before = text
+            renameTable.each { entry ->
+                def (kind, from, to) = entry
+                if (kind == 'literal') {
+                    // Exactly this text becomes exactly that. For a call whose
+                    // shape changed rather than its name — a different
+                    // receiver, an extra argument — where no rename will do.
+                    text = text.replace(from, to)
+                } else if (kind == 'type') {
+                    // The qualified name first, which fixes the import, then
+                    // the simple name on word boundaries so a type whose name
+                    // merely starts the same is left alone.
+                    def fromSimple = from.substring(from.lastIndexOf('.') + 1)
+                    def toSimple = to.substring(to.lastIndexOf('.') + 1)
+                    text = text.replace(from, to)
+                    if (fromSimple != toSimple) {
+                        text = text.replaceAll("\\b" + java.util.regex.Pattern.quote(fromSimple) + "\\b", toSimple)
+                    }
+                } else if (kind == 'member') {
+                    // Called on something named, because the bare method name
+                    // is not enough to go on: this mod has its own `text` and
+                    // `item` helpers, and renaming every `.text(` renamed
+                    // those too — 24 errors became 96. Naming the receiver is
+                    // what tells the game's drawing apart from ours.
+                    int dot = from.lastIndexOf('.')
+                    if (dot > 0) {
+                        def recv = from.substring(0, dot)
+                        def name = from.substring(dot + 1)
+                        text = text.replace("${recv}.${name}(", "${recv}.${to}(")
+                    } else {
+                        def q = java.util.regex.Pattern.quote(from)
+                        text = text.replaceAll("::${q}\\b", "::${to}")
+                    }
+                } else {
+                    // A name distinctive enough to rename wherever it appears:
+                    // a method this mod declares as well as calls, or a field
+                    // named in a string by an accessor.
+                    text = text.replaceAll("\\b" + java.util.regex.Pattern.quote(from) + "\\b", to)
+                }
+            }
+            target.setText(text, "UTF-8")
+            if (text != before) rewritten++
+        }
+        }
+        // What a version cannot say with a rename, it says with a file. An
+        // overlay replaces the ported copy outright, and is where behaviour
+        // that genuinely differs belongs rather than being spelled around.
+        def overlay = file("versions/${mcVersion}/java")
+        def replaced = 0
+        if (overlay.isDirectory()) {
+            overlay.eachFileRecurse { f ->
+                if (!f.isFile()) return
+                def rel = f.absolutePath.substring(overlay.absolutePath.length() + 1)
+                def target = new File(portedDir, rel)
+                target.parentFile.mkdirs()
+                target.bytes = f.bytes
+                replaced++
+            }
+        }
+        logger.lifecycle("  ported ${rewritten} files to Minecraft ${mcVersion}'s names"
+                + (replaced > 0 ? ", ${replaced} replaced outright" : ""))
+    }
+}
+
+if (!renameTable.isEmpty()) {
+    sourceSets.main.java.srcDirs = [portedDir]
+    // Everything that reads the source has to wait for it to be written, not
+    // just the compiler — Gradle is strict about a task consuming another's
+    // output without saying so.
+    tasks.named("compileJava") { dependsOn portSources }
+    tasks.matching { it.name == "compileChecksJava" }.configureEach { dependsOn portSources }
+    // By name and lazily, because the sources jar is registered further down by
+    // `withSourcesJar()` and does not exist yet at this point in the script.
+    tasks.matching { it.name == "sourcesJar" }.configureEach { dependsOn portSources }
+}
+
+// ---------------------------------------------------------------------------
+// The check harnesses in tools/.
+//
+// They were written as plain classes with a main method, because they need the
+// Minecraft jar on the classpath and predate any test wiring. That worked, but
+// it meant `gradlew build` compiled and shipped the mod without running a single
+// one of them — the checks only ran when somebody remembered to invoke javac by
+// hand. They are a source set now, so a build that would fail them fails.
+//
+// Not `src/test` and not JUnit: these are self-reporting harnesses that exit
+// non-zero on failure, and rewriting several thousand lines of them to earn a
+// familiar directory name would be churn for its own sake.
+// ---------------------------------------------------------------------------
+sourceSets {
+    checks {
+        java {
+            // The ported copy when this target has a rename table, so the
+            // harnesses are checking the same names the mod was built with.
+            srcDirs = renameTable.isEmpty() ? ['tools'] : [portedTools]
+        }
+        // Taken from main rather than declared again: Loom supplies the
+        // Minecraft jar through its own configuration, so a source set that
+        // only extends `implementation` gets the mod's dependencies and none
+        // of the game's.
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+
+def harnesses = [
+        'ExplorerTest',
+        'DispatchNameTest',
+        'ThemeTest',
+        'HomeToolsTest',
+]
+
+def harnessTasks = harnesses.collect { harness ->
+    tasks.register("run${harness}", JavaExec) {
+        group = 'verification'
+        description = "Runs ${harness}."
+        classpath = sourceSets.checks.runtimeClasspath
+        mainClass = harness
+        // The harnesses print their own tally and exit non-zero on a failure,
+        // which is what makes them usable as a build gate.
+        it.jvmArgs = ['-Xmx2G']
+    }
+}
+
+tasks.register('runChecks') {
+    group = 'verification'
+    description = 'Runs every harness in tools/.'
+    dependsOn harnessTasks
+}
+
+tasks.named('check') {
+    dependsOn 'runChecks'
+}
+
+processResources {
+    // What the mod will refuse to load outside of. Written from the same
+    // properties the build used, so a jar can never claim a version range it
+    // was not compiled for.
+    def metadata = [
+            version        : project.version.toString(),
+            minecraft_range: mcRange,
+            loader_version : project.loader_version.toString(),
+            java_release   : javaRelease.toString(),
+    ]
+    inputs.properties metadata
+
+    filesMatching("fabric.mod.json") {
+        expand metadata
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    // `release` rather than source/target compatibility alone: it checks the
+    // API against that Java version too, so a build for 21 cannot quietly use
+    // something that only exists in 25.
+    it.options.release = javaRelease
+    it.options.encoding = "UTF-8"
+    // javac stops listing after a hundred by default, which hides the size of
+    // a port behind a number that is always a hundred.
+    it.options.compilerArgs << "-Xmaxerrs" << "2000"
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.toVersion(javaRelease)
+    targetCompatibility = JavaVersion.toVersion(javaRelease)
+}
+
+jar {
+    def projectName = project.name
+    inputs.property "projectName", projectName
+    from("LICENSE") {
+        rename { "${it}_${projectName}" }
+    }
+    // Apache-2.0 attribution for the algorithms adapted from Custom Model Data
+    // Viewer has to travel with the jar, not just sit in the repository.
+    from("NOTICE") {
+        rename { "${it}_${projectName}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+    }
+}
+
+

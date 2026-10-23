@@ -1,0 +1,44 @@
+Custom Model Viewer
+Copyright (c) the Custom Model Viewer contributors
+Licensed under the MIT License (see LICENSE).
+
+================================================================================
+Third-party acknowledgements
+================================================================================
+
+Custom Model Data Viewer (CMDV)
+    https://github.com/ModLabsCC/CustomModelDataViewer
+    https://modrinth.com/mod/cmdv
+    Licensed under the Apache License, Version 2.0
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    No source code from CMDV is copied into this project. CMDV is written in
+    Kotlin against a different data model; every file here is an independent
+    implementation in Java.
+
+    Two ideas in CMDV's resource listener did inform the design of this
+    project's scanner, and are acknowledged as its contribution:
+
+      1. Carrying a "has this branch passed through custom model data" flag
+         down the recursion over an item definition's model tree, and treating
+         only the models reached that way as belonging to the pack. This is the
+         reachability test that separates a pack's own models from the
+         thousands of vanilla ones, and it is the right test.
+
+      2. Accumulating the select-case values and range-dispatch thresholds
+         along the route so that the component needed to reproduce a model on a
+         real item can be rebuilt from them.
+
+    Both are reimplemented here, extended to Minecraft 26.2's full node set,
+    and corrected in two places where CMDV's version loses information: a
+    "when" clause holding an array of values (which vanilla's own trident.json
+    uses), and the fallback branch of a custom model data selection, which
+    means the opposite of having been selected by one.
+
+    See dev/custommodels/cmv/explorer/def/ItemDefinitionParser.java and
+    dev/custommodels/cmv/explorer/graph/GraphBuilder.java, where these
+    acknowledgements are repeated at the point of use.
+
+Minecraft, Mojang and the Minecraft assets referenced by this mod are the
+property of Mojang AB. This is not an official Minecraft product and is not
+approved by or associated with Mojang.

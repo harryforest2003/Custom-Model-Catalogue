@@ -1,0 +1,57 @@
+# What 1.21.4 calls the things this mod uses.
+#
+# Every line was looked up in the mapped jar Loom produced for this version and
+# in that version's Fabric API, not guessed at. `Identifier`, `ItemModelResolver`,
+# `ItemStackRenderState` and `ClientTextTooltip` are deliberately absent: they
+# are spelled the same here as in 26.2, which is most of why this port is small.
+
+# --- Minecraft -------------------------------------------------------------
+net.minecraft.client.gui.GuiGraphicsExtractor=net.minecraft.client.gui.GuiGraphics
+net.minecraft.client.resources.model.cuboid.ItemTransform=net.minecraft.client.renderer.block.model.ItemTransform
+
+# --- Fabric API ------------------------------------------------------------
+net.fabricmc.fabric.api.client.rendering.v1.ClientTooltipComponentCallback=net.fabricmc.fabric.api.client.rendering.v1.TooltipComponentCallback
+net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper=net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
+net.fabricmc.fabric.api.client.command.v2.ClientCommands=net.fabricmc.fabric.api.client.command.v2.ClientCommandManager
+
+# --- methods -----------------------------------------------------------------
+# Named by their receiver, because this mod has its own `text` and `item`
+# helpers and a bare rename catches those too. The game's drawing object is
+# called `graphics` or `g` throughout this source and nothing else is.
+()graphics.item=renderItem
+()g.item=renderItem
+()graphics.text=drawString
+()g.text=drawString
+()graphics.itemDecorations=renderItemDecorations
+()g.itemDecorations=renderItemDecorations
+
+# Distinctive enough to rename wherever they appear, declarations included.
+setItemTransform=setTransform
+itemTransform=transform
+extractRenderState=render
+registerKeyMapping=registerKeyBinding
+
+# --- calls whose shape changed, not just their name --------------------------
+# `setScreen` moved onto the gui object in 26.2; here it is still on Minecraft.
+~mc().gui.setScreen(=mc().setScreen(
+
+# `sendSystemMessage` does not exist on the client player here.
+~mc().player.sendSystemMessage(message)=mc().player.displayClientMessage(message, false)
+
+# Marking a command "attended" — so the player must confirm it rather than a
+# server triggering it — arrived in Fabric API 0.152.0. This version ships
+# 0.141.5 and has no such concept, so the requirement is dropped. The commands
+# still work; they simply are not gated, because there is nothing to gate them
+# with. Anyone porting to a Fabric API that has it should delete this line.
+~.requires(FabricClientCommandSource::attended)=
+
+# The tooltip component's two drawing methods. Same signatures, different
+# names — 26.2 calls them extract*, this version calls them render*.
+extractText=renderText
+extractImage=renderImage
+
+# A mixin names its target method in a string, so that string has to be ported
+# too. 26.2's GuiGraphicsExtractor.tooltip is GuiGraphics.renderTooltip here,
+# same signature. Quoted, because the bare word appears all over this mod and
+# only this one occurrence is a target name.
+~"tooltip"="renderTooltip"

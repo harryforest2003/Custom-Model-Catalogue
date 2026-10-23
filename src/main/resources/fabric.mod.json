@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "cmvcatalogue",
+  "version": "${version}",
+  "name": "Custom Model Catalogue",
+  "description": "Browses the custom item models in your resource packs. Works out which vanilla item each model belongs to, groups their states, collapses duplicates, and renders every one in 3D from the pack's own geometry and textures \u2014 without enabling the pack or touching a single item you own. Favourites and sets are your own lists. Viewer only: it applies nothing.",
+  "authors": [
+    "You"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.custommodels.cmv.core.CmvMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "${minecraft_range}",
+    "java": ">=${java_release}",
+    "fabric-api": "*"
+  },
+  "suggests": {}
+}
