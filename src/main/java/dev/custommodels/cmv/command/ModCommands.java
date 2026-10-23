@@ -131,14 +131,14 @@ public final class ModCommands {
             // ---- Model explorer ------------------------------------------
             // Separate from the browser above: that one lists custom model data
             // entries as inventory slots, this one inspects resolved models.
-            dispatcher.register(ClientCommands.literal("modelexplorer")
+            dispatcher.register(ClientCommands.literal("cataloguemodels")
                     .requires(FabricClientCommandSource::attended)
                     .executes(context -> openExplorer(null))
                     .then(ClientCommands.argument("search", StringArgumentType.greedyString())
                             .executes(context -> openExplorer(
                                     StringArgumentType.getString(context, "search")))));
 
-            dispatcher.register(ClientCommands.literal("cmv")
+            dispatcher.register(ClientCommands.literal("cmvcat")
                     .requires(FabricClientCommandSource::attended)
                     .executes(context -> openExplorer(null))
                     .then(ClientCommands.literal("rescan")

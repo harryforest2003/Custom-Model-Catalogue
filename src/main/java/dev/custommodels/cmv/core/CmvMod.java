@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class CmvMod implements ClientModInitializer {
 
-    public static final String MOD_ID = "cmv";
+    public static final String MOD_ID = "cmvcatalogue";
     public static final Logger LOGGER = LoggerFactory.getLogger("CustomModelViewer");
 
     @Override

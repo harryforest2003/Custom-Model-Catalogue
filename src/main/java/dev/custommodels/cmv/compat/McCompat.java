@@ -714,7 +714,7 @@ public final class McCompat {
 
     /** Builds an identifier for this mod's namespace, e.g. attribute modifier ids. */
     public static Identifier modId(String path) {
-        return Identifier.fromNamespaceAndPath("cmv", path);
+        return Identifier.fromNamespaceAndPath("cmvcatalogue", path);
     }
 
     public static Optional<Item> itemById(String id) {
