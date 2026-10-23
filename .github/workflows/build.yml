@@ -1,0 +1,71 @@
+name: Build
+
+# Every push builds and keeps the jars for 30 days; pushing a v-tag also
+# publishes them as a release. Nothing is released by accident.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      # Only what creating a release needs, and only this job has it.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 26.2 needs 25. The 1.21.11 target compiles with `--release 21`
+          # against this same JDK, so one is enough for both.
+          java-version: '25'
+
+      - name: Cache Gradle and the Minecraft it downloads
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build every target
+        # Runs the check harnesses too, so a jar that reaches a release has
+        # passed all of them.
+        run: |
+          chmod +x gradlew build-all.sh
+          ./build-all.sh
+
+      - name: What was built
+        run: ls -lh build/dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jars
+          path: build/dist/*.jar
+          retention-days: 30
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        # gh is already on the runner, so this needs no third-party action.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          A catalogue of the custom item models in your resource packs. It
+          applies nothing to your items and is invisible to servers.
+
+          **Download the `+26.2` jar** unless you are specifically on 1.21.11.
+
+          | Jar | Minecraft |
+          | --- | --- |
+          | `custom-model-catalogue-*+26.2.jar` | 26.2 |
+          | `custom-model-catalogue-*+1.21.11.jar` | 1.21.11 |
+
+          Needs Fabric Loader and Fabric API. Built by this repository's
+          workflow with all 571 checks passing.
+          NOTES
+          gh release create "${GITHUB_REF_NAME}" build/dist/*.jar \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md

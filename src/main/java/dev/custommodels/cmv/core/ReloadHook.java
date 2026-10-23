@@ -50,7 +50,6 @@ public final class ReloadHook {
                                              PreparableReloadListener.SharedState state) {
                             ExplorerIndex.get().onResourceReload();
                             dev.custommodels.cmv.packs.PackFormatFix.requestCheck();
-                            // Only a request. Rebuilding the unified pack means
                         }
                     });
         } catch (RuntimeException | LinkageError e) {

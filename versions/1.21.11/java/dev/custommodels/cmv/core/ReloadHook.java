@@ -2,7 +2,6 @@ package dev.custommodels.cmv.core;
 
 import dev.custommodels.cmv.compat.McCompat;
 import dev.custommodels.cmv.explorer.scan.ExplorerIndex;
-import dev.custommodels.cmv.unified.UnifiedPack;
 import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.minecraft.resources.Identifier;
@@ -35,16 +34,15 @@ public final class ReloadHook {
 
                         @Override
                         public void onResourceManagerReload(ResourceManager manager) {
+                            // A flag flip and a request, nothing more: doing real
+                            // work inside a reload is what this hook exists to
+                            // avoid.
                             ExplorerIndex.get().onResourceReload();
-                            // Only a request. Rebuilding the unified pack means
-                            // reloading, and starting a reload from inside one
-                            // is how a mod reloads forever.
-                            UnifiedPack.requestSync();
-                            dev.custommodels.cmv.unified.PackFormatFix.requestCheck();
+                            dev.custommodels.cmv.packs.PackFormatFix.requestCheck();
                         }
                     });
         } catch (RuntimeException | LinkageError e) {
-            // Without the hook the explorer still works, it just has to be
+            // Without the hook the catalogue still works, it just has to be
             // refreshed by hand after a pack change. Not worth failing startup.
             CmvMod.LOGGER.warn("Could not register resource reload hook", e);
         }
