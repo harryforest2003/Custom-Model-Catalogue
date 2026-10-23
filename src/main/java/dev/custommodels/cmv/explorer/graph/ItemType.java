@@ -172,15 +172,35 @@ public enum ItemType {
                 || shortIds.contains("enchantable/mace")) {
             return SWORD;
         }
-        // Checked last of the tags: "durability" covers nearly every tool and
-        // weapon in the game, so anything it would answer for is better
-        // answered by one of the specific tags above.
+        if (shortIds.contains("fishes") || shortIds.contains("meat")) {
+            return FOOD;
+        }
+        return null;
+    }
+
+    /**
+     * The tags that answer for almost anything, asked only when nothing else can.
+     *
+     * <p>{@code enchantable/durability} covers nearly every tool and weapon in
+     * the game, and it used to be asked at the end of {@link #fromTags} — which
+     * is the end of the tags but not the end of the questions. A shield carries
+     * it, has no tag of its own, and so was answered "tool" before anyone
+     * thought to look at its name or its id, either of which would have said
+     * shield. Every shield in every pack landed in Tools and the Shields
+     * category stood nearly empty.</p>
+     *
+     * <p>Split out so the order is the order of confidence rather than the
+     * order of the source: specific tags, then the item itself, then this.</p>
+     */
+    public static ItemType fromGenericTags(Set<String> tagIds) {
+        Set<String> shortIds = new LinkedHashSet<>();
+        for (String tag : tagIds) {
+            int colon = tag.indexOf(':');
+            shortIds.add(colon >= 0 ? tag.substring(colon + 1) : tag);
+        }
         if (shortIds.contains("enchantable/mining")
                 || shortIds.contains("enchantable/durability")) {
             return TOOL;
-        }
-        if (shortIds.contains("fishes") || shortIds.contains("meat")) {
-            return FOOD;
         }
         return null;
     }
@@ -189,6 +209,12 @@ public enum ItemType {
     public static ItemType fromItemId(String baseItemId) {
         int colon = baseItemId.indexOf(':');
         String path = colon >= 0 ? baseItemId.substring(colon + 1) : baseItemId;
+        // A modded shield carries no vanilla tag and is not called "shield",
+        // so without this it reaches the durability catch-all and becomes a
+        // tool, as every shield used to.
+        if (path.equals("shield") || path.endsWith("_shield")) {
+            return SHIELD;
+        }
         // Dyes and feathers get their own categories rather than being swept
         // into Misc: packs use them as carriers heavily enough that they are
         // worth navigating to, and there are sixteen dyes to fold together.

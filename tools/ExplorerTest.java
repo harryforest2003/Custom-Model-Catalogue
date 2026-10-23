@@ -678,8 +678,14 @@ public final class ExplorerTest {
         check("a sword tag still wins",
                 ItemType.fromTags(java.util.Set.of("minecraft:swords",
                         "minecraft:enchantable/durability")) == ItemType.SWORD);
-        check("durability alone is only a tool",
-                ItemType.fromTags(java.util.Set.of("minecraft:enchantable/durability")) == ItemType.TOOL);
+        check("durability alone is no longer answered by the specific tags",
+                ItemType.fromTags(java.util.Set.of("minecraft:enchantable/durability")) == null);
+        check("it is answered last, by the generic ones",
+                ItemType.fromGenericTags(
+                        java.util.Set.of("minecraft:enchantable/durability")) == ItemType.TOOL);
+        check("so a shield is a shield",
+                ItemType.fromItemId("minecraft:shield") == ItemType.SHIELD
+                        && ItemType.fromItemId("someone:obsidian_shield") == ItemType.SHIELD);
 
         // Compound names. This pack writes "strawhat" and "tribalhelmet1", and
         // whole-token matching saw neither, so 49 pieces of headwear were

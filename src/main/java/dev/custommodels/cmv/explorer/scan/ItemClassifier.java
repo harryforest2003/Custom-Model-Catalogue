@@ -59,12 +59,22 @@ public final class ItemClassifier {
             return new ItemType.Classification(fromComponents,
                     ItemType.Source.ITEM_COMPONENT, baseItemId);
         }
+        // Last, because it answers for nearly everything. Asked at the end of
+        // the tags rather than at the end of the questions, it beat the item's
+        // own id to the answer — and a shield, which has no tag of its own and
+        // an id that says exactly what it is, came back a tool.
+        ItemType generic = ItemType.fromGenericTags(tags);
+        if (generic != null) {
+            return new ItemType.Classification(generic,
+                    ItemType.Source.ITEM_TAG, firstRelevantTag(tags));
+        }
         return new ItemType.Classification(ItemType.MISC, ItemType.Source.NONE, baseItemId);
     }
 
     private static String firstRelevantTag(Set<String> tags) {
         for (String tag : tags) {
-            if (ItemType.fromTags(Set.of(tag)) != null) {
+            if (ItemType.fromTags(Set.of(tag)) != null
+                    || ItemType.fromGenericTags(Set.of(tag)) != null) {
                 return "#" + tag;
             }
         }
