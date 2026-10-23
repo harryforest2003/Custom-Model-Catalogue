@@ -1534,37 +1534,26 @@ public final class WrapBankScreen extends Screen {
         ScanReport report = index.report();
         List<HomeRow> rows = new ArrayList<>();
 
-        // The instructions come first because this is where the screen opens,
-        // and a player who has just bound the key has no idea what a "wrap" is
-        // yet. Everything below is for when something has gone wrong; this part
-        // is for when nothing has.
+        // The instructions come first because this is where the screen opens.
         rows.add(new HomeRow("GETTING STARTED", 0, true));
-        rows.add(new HomeRow("1.  Hold the item you want to change, then press "
-                + Keybinds.openKeyName() + " to open this screen.",
+        rows.add(new HomeRow("1.  Press " + Keybinds.openKeyName()
+                + " to open this screen, then open the Catalogue tab.",
                 GuiTheme.TEXT_DIM, false));
-        rows.add(new HomeRow("2.  Open the Wrap Bank tab. The sidebar splits every model "
-                + "the packs hold by what it goes on.", GuiTheme.TEXT_DIM, false));
-        rows.add(new HomeRow("3.  Click a model to put it on the held item. Click the same "
-                + "one again to take it off.", GuiTheme.TEXT_DIM, false));
-        rows.add(new HomeRow("4.  The armour and offhand slots down the left apply a look "
-                + "without unequipping anything.", GuiTheme.TEXT_DIM, false));
+        rows.add(new HomeRow("2.  The sidebar splits every model the packs hold by what "
+                + "item it is filed under.", GuiTheme.TEXT_DIM, false));
+        rows.add(new HomeRow("3.  Click a card to open the model: its states, textures, "
+                + "geometry, and image and animation export.", GuiTheme.TEXT_DIM, false));
+        rows.add(new HomeRow("4.  Hold an item to narrow the grid to models that item "
+                + "can show.", GuiTheme.TEXT_DIM, false));
         rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("Apply mode is the switch above the grid. Turned off, clicking "
-                + "a card opens its details", GuiTheme.TEXT_MUTED, false));
-        rows.add(new HomeRow("and its textures instead of applying it. Sets are your own "
-                + "lists, made from the right-click menu.", GuiTheme.TEXT_MUTED, false));
+        rows.add(new HomeRow("Nothing here changes an item. Sets are your own lists, made "
+                + "from the right-click menu.", GuiTheme.TEXT_MUTED, false));
         rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("KEYS", 0, true));
         rows.add(new HomeRow("R  rescan the packs      I  index statistics      "
                 + "Esc  close      Right-click a card  add to a set",
                 GuiTheme.TEXT_DIM, false));
         rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("IF A LOOK WILL NOT STICK", 0, true));
-        rows.add(new HomeRow("On a server that owns your inventory the mod cannot rewrite "
-                + "the item, so it draws the look", GuiTheme.TEXT_MUTED, false));
-        rows.add(new HomeRow("on this computer instead. Only you see it, but it survives "
-                + "moving the item between slots.", GuiTheme.TEXT_MUTED, false));
-
         rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("APPEARANCE", 0, true));
         rows.add(new HomeRow(String.format("Primary colour   \u2014   #%06X   "
