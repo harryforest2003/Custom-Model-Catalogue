@@ -1,6 +1,6 @@
 {
   "key.category.cmvcatalogue.main": "Custom Model Catalogue",
-  "key.cmv.open_screen": "Open Custom Model Catalogue",
+  "key.cmv.open_screen": "Open Catalogue",
   "cmv.screen.detail": "Model Details",
   "cmv.explorer.scanning": "Scanning resource packs...",
   "cmv.explorer.no_models": "No custom models found in the loaded resource packs",
