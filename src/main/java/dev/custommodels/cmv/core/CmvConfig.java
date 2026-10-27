@@ -112,6 +112,17 @@ public final class CmvConfig {
     public boolean autoRotateDetail = true;
 
     /**
+     * Show the detail view's model on your own figure rather than on its own.
+     *
+     * <p>Off, so the card opens on the render it has always opened on. Kept
+     * here beside the other two detail-view switches rather than per card: the
+     * question a player is answering is "how do I want to look at models", and
+     * made per card it would be a switch they had to flip again on every model
+     * they opened.</p>
+     */
+    public boolean figureInDetail = false;
+
+    /**
      * Play a model's frames in the detail view: a bow drawing, a crossbow
      * loading, a rod casting.
      *
@@ -351,13 +362,14 @@ public final class CmvConfig {
     public boolean skinTooltip = true;
 
     /**
-     * Whether a skinned helmet is drawn as its model when worn.
+     * Whether a worn model is drawn as its model on the figure's head.
      *
-     * <p>On, because a skin on a helmet is otherwise invisible on the head —
-     * Minecraft draws the armour texture there instead of the item's model,
-     * and the models in these packs are drawn to be worn. Off restores the
-     * game's own behaviour: the helmet looks like a helmet, and the skin is
-     * seen only in the inventory and in the hand. See {@code HeadSkins}.</p>
+     * <p>On, because a model meant for the head is otherwise invisible in the
+     * one view whose job is to show you wearing it — Minecraft draws the
+     * armour texture there instead of the item's model. Off restores the
+     * game's own behaviour: the helmet looks like a helmet. Nothing you own is
+     * affected either way; this is only ever about the detail card's own
+     * figure. See {@code HeadSkins}.</p>
      */
     public boolean headSkins = true;
 

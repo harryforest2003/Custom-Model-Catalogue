@@ -5,9 +5,11 @@ import dev.custommodels.cmv.core.CmvConfig;
 import dev.custommodels.cmv.core.CmvMod;
 import dev.custommodels.cmv.explorer.def.Selector;
 import dev.custommodels.cmv.explorer.export.ImageExport;
+import dev.custommodels.cmv.wrap.WrapPreview;
 import dev.custommodels.cmv.wrap.WrapTarget;
 import dev.custommodels.cmv.explorer.graph.LogicalModel;
 import dev.custommodels.cmv.explorer.graph.ModelState;
+import dev.custommodels.cmv.explorer.render.FigurePreview;
 import dev.custommodels.cmv.explorer.render.PreviewService;
 import dev.custommodels.cmv.explorer.res.ResolvedModel;
 import dev.custommodels.cmv.explorer.scan.ExplorerIndex;
@@ -47,6 +49,19 @@ public final class DetailScreen extends Screen {
     private float pitch = -8.0F;
     private float zoom = 1.0F;
     private boolean autoRotate = CmvConfig.get().autoRotateDetail;
+    /**
+     * Which of the two renders the panel is showing.
+     *
+     * <p>The model render is the default, and the one the card has always
+     * opened on.</p>
+     */
+    private boolean onFigure = CmvConfig.get().figureInDetail;
+    /**
+     * The other view. Costs nothing until it is asked for: no mannequin is
+     * made, and no stack is built, until the panel first draws it.
+     */
+    private final FigurePreview figure = new FigurePreview();
+    private boolean figureDressed;
     /** When the view last stopped turning, for the settle before it sharpens. */
     private long stillSince;
     /** The size the render being shown was drawn at, reported below it. */
@@ -106,6 +121,7 @@ public final class DetailScreen extends Screen {
     @Override
     public void removed() {
         index.closeViewer();
+        figure.close();
         super.removed();
     }
 
@@ -201,6 +217,15 @@ public final class DetailScreen extends Screen {
         }
         if (dragging || autoRotate) {
             stillSince = System.currentTimeMillis();
+        }
+        if (onFigure) {
+            // The model view's three clocks are the model view's work: a state
+            // to step, a dissolve to run, a texture tick to advance, each of
+            // which asks the preview service to render. None of it is on
+            // screen, so none of it runs — and because they are clocks rather
+            // than threads, stopping them is this, and starting them again is
+            // nothing. The card comes back to the frame it left.
+            return;
         }
         advanceState(seconds);
         advanceFade(seconds);
@@ -523,8 +548,8 @@ public final class DetailScreen extends Screen {
         // The controls wrap when they will not fit on one line, and the panel
         // gives up the height for the extra row. They used to be a single row
         // that simply stopped drawing when it ran out of width, which quietly
-        // dropped whichever control was last — "Give & apply", the one people
-        // actually want — on any window narrow enough to matter.
+        // dropped whichever control was last on any window narrow enough to
+        // matter.
         int controlRows = controlRowCount(right - left);
         int bottom = this.height - MARGIN / 2 - 24 - (controlRows - 1) * CONTROL_ROW_H;
 
@@ -535,79 +560,88 @@ public final class DetailScreen extends Screen {
         int centreX = (left + right) / 2;
         int centreY = (top + bottom) / 2;
 
-        // Small while it turns, the size it is actually displayed at once it
-        // stops. A spin asks for a fresh render every three degrees; standing
-        // still asks for one and then nothing.
-        CmvConfig config = CmvConfig.get();
-        int frames = index.previews().animationSteps(model, stateIndex);
-        int guiScale = McCompat.guiScale();
-        int smallSize = PreviewService.detailPixels(box, guiScale, true, frames,
-                config.maxDetailPixels(), config.maxStillPixels(),
-                PreviewService.cycleBudget());
-        int sharpSize = PreviewService.detailPixels(box, guiScale, false, frames,
-                config.maxDetailPixels(), config.maxStillPixels(),
-                PreviewService.cycleBudget());
-        // The small render is what is shown until the sharp one is completely
-        // ready for this exact angle — every frame of it, for a model whose
-        // textures animate. Swapping the moment the first frame landed would
-        // drop the view to "Rendering..." on the pause (nothing has been drawn
-        // at the new size yet, and the fallback is kept per size) and would
-        // then flicker between sharp and soft for a whole cycle. So the sharp
-        // one is asked for and quietly accumulates, and the picture changes
-        // once, when it is all there.
-        int renderSize = smallSize;
-        sharpening = false;
-        if (!moving() && sharpSize > smallSize) {
-            index.previews().detail(model, stateIndex, sharpSize,
-                    yaw, pitch, zoom, textureTick);
-            if (index.previews().cycleReady(model, stateIndex, sharpSize,
-                    yaw, pitch, zoom)) {
-                renderSize = sharpSize;
-            } else {
-                sharpening = true;
-            }
-        }
-        shownPixels = renderSize;
-        sharpTarget = sharpSize;
-        Identifier texture = index.previews()
-                .detail(model, stateIndex, renderSize, yaw, pitch, zoom, textureTick);
-        // The frame being left behind, at whatever angle it was last drawn at.
-        // Nothing is rendered for it: over half a second of dissolve the view
-        // turns about eight degrees, which no one can see through a fade, and
-        // asking for the exact angle would double the render rate to correct
-        // it.
-        Identifier previous = fadeFrom < 0 || fadeFrom == stateIndex ? null
-                : index.previews().lastRendered(model, fadeFrom, renderSize);
+        // The same square for both views, worked out once. The figure is
+        // given the rectangle the model render uses rather than the whole
+        // panel, because the two are meant to occupy one area: flipping
+        // between them should change what is drawn and nothing else.
         int drawX = centreX - box / 2;
         int drawY = centreY - box / 2;
-        if (previous != null && texture != null) {
-            // Both fade: one out as the other comes in. Leaving the old frame
-            // opaque underneath would hide the fade until the moment it ends
-            // and then take the old bow away all at once, which is the jolt
-            // this exists to remove.
-            float into = smooth(fadeProgress);
-            GuiTheme.fadedTexture(graphics, previous, drawX, drawY,
-                    box, box, renderSize, 1.0F - into);
-            GuiTheme.fadedTexture(graphics, texture, drawX, drawY,
-                    box, box, renderSize, into);
-        } else if (texture != null) {
-            GuiTheme.texture(graphics, texture, drawX, drawY, box, box, 0.0F, 1.0F);
-        } else if (previous != null) {
-            // The frame being moved to has not been drawn at this angle yet.
-            // Holding the previous one is better than dropping to a message
-            // for a frame or two.
-            GuiTheme.texture(graphics, previous, drawX, drawY, box, box, 0.0F, 1.0F);
+        if (onFigure) {
+            drawFigure(graphics, drawX, drawY, box, centreX, centreY);
         } else {
-            String message = state().resolved().exists()
-                    ? "Rendering..." : "Model file not found";
-            GuiTheme.text(graphics, this.font, message,
-                    centreX - this.font.width(message) / 2, centreY - 4,
-                    state().resolved().exists() ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_ERROR,
-                    false);
+            // Small while it turns, the size it is actually displayed at once it
+            // stops. A spin asks for a fresh render every three degrees; standing
+            // still asks for one and then nothing.
+            CmvConfig config = CmvConfig.get();
+            int frames = index.previews().animationSteps(model, stateIndex);
+            int guiScale = McCompat.guiScale();
+            int smallSize = PreviewService.detailPixels(box, guiScale, true, frames,
+                    config.maxDetailPixels(), config.maxStillPixels(),
+                    PreviewService.cycleBudget());
+            int sharpSize = PreviewService.detailPixels(box, guiScale, false, frames,
+                    config.maxDetailPixels(), config.maxStillPixels(),
+                    PreviewService.cycleBudget());
+            // The small render is what is shown until the sharp one is completely
+            // ready for this exact angle — every frame of it, for a model whose
+            // textures animate. Swapping the moment the first frame landed would
+            // drop the view to "Rendering..." on the pause (nothing has been drawn
+            // at the new size yet, and the fallback is kept per size) and would
+            // then flicker between sharp and soft for a whole cycle. So the sharp
+            // one is asked for and quietly accumulates, and the picture changes
+            // once, when it is all there.
+            int renderSize = smallSize;
+            sharpening = false;
+            if (!moving() && sharpSize > smallSize) {
+                index.previews().detail(model, stateIndex, sharpSize,
+                        yaw, pitch, zoom, textureTick);
+                if (index.previews().cycleReady(model, stateIndex, sharpSize,
+                        yaw, pitch, zoom)) {
+                    renderSize = sharpSize;
+                } else {
+                    sharpening = true;
+                }
+            }
+            shownPixels = renderSize;
+            sharpTarget = sharpSize;
+            Identifier texture = index.previews()
+                    .detail(model, stateIndex, renderSize, yaw, pitch, zoom, textureTick);
+            // The frame being left behind, at whatever angle it was last drawn at.
+            // Nothing is rendered for it: over half a second of dissolve the view
+            // turns about eight degrees, which no one can see through a fade, and
+            // asking for the exact angle would double the render rate to correct
+            // it.
+            Identifier previous = fadeFrom < 0 || fadeFrom == stateIndex ? null
+                    : index.previews().lastRendered(model, fadeFrom, renderSize);
+            if (previous != null && texture != null) {
+                // Both fade: one out as the other comes in. Leaving the old frame
+                // opaque underneath would hide the fade until the moment it ends
+                // and then take the old bow away all at once, which is the jolt
+                // this exists to remove.
+                float into = smooth(fadeProgress);
+                GuiTheme.fadedTexture(graphics, previous, drawX, drawY,
+                        box, box, renderSize, 1.0F - into);
+                GuiTheme.fadedTexture(graphics, texture, drawX, drawY,
+                        box, box, renderSize, into);
+            } else if (texture != null) {
+                GuiTheme.texture(graphics, texture, drawX, drawY, box, box, 0.0F, 1.0F);
+            } else if (previous != null) {
+                // The frame being moved to has not been drawn at this angle yet.
+                // Holding the previous one is better than dropping to a message
+                // for a frame or two.
+                GuiTheme.texture(graphics, previous, drawX, drawY, box, box, 0.0F, 1.0F);
+            } else {
+                String message = state().resolved().exists()
+                        ? "Rendering..." : "Model file not found";
+                GuiTheme.text(graphics, this.font, message,
+                        centreX - this.font.width(message) / 2, centreY - 4,
+                        state().resolved().exists() ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_ERROR,
+                        false);
+            }
         }
 
         String angle = String.format("yaw %.0f   pitch %.0f   zoom %.2fx", yaw, pitch, zoom)
-                + "   " + shownPixels + "px" + (sharpening ? " \u2192 " + sharpTarget : "");
+                + (onFigure ? "   " + placement() : "   " + shownPixels + "px"
+                        + (sharpening ? " \u2192 " + sharpTarget : ""));
         GuiTheme.text(graphics, this.font, angle, left + 6, bottom - 12,
                 GuiTheme.TEXT_MUTED, false);
 
@@ -618,14 +652,6 @@ public final class DetailScreen extends Screen {
                                      int left, int bottom, int right) {
         int y = bottom + 5;
         int x = left;
-        List<Runnable> handlers = List.of(
-                () -> autoRotate = !autoRotate, this::resetView, this::copyImage,
-                this::saveImage, this::exportAnimation);
-        List<String> labels = controlLabels();
-        List<CopyAction> controls = new ArrayList<>(labels.size());
-        for (int i = 0; i < labels.size(); i++) {
-            controls.add(new CopyAction(labels.get(i), handlers.get(i)));
-        }
 
         ExportProgress running = export;
         if (running != null) {
@@ -637,8 +663,8 @@ public final class DetailScreen extends Screen {
             return;
         }
 
-        for (CopyAction control : controls) {
-            int width = this.font.width(control.label()) + 12;
+        for (Control control : controls()) {
+            int width = this.font.width(control.measure()) + 12;
             if (x > left && x + width > right) {
                 x = left;
                 y += CONTROL_ROW_H;
@@ -663,8 +689,8 @@ public final class DetailScreen extends Screen {
     private int controlRowCount(int available) {
         int rows = 1;
         int x = 0;
-        for (String label : controlLabels()) {
-            int width = this.font.width(label) + 12;
+        for (Control control : controls(true)) {
+            int width = this.font.width(control.measure()) + 12;
             if (x > 0 && x + width > available) {
                 rows++;
                 x = 0;
@@ -674,9 +700,212 @@ public final class DetailScreen extends Screen {
         return rows;
     }
 
-    private List<String> controlLabels() {
-        return List.of(autoRotate ? "Pause spin" : "Auto spin", "Reset view",
-                "Copy image", "Save image", "Animated preview");
+    /**
+     * One preview control: what it says, the widest it ever says it, and what
+     * it does.
+     *
+     * <p>The widest form is carried separately because two of these change
+     * their own label when clicked, and the panel's height comes from how many
+     * rows the labels need. Measured from the label on screen, flipping "Auto
+     * spin" to "Pause spin" could add a row and shift the whole preview at the
+     * moment of the click; measured from the widest form, the row the controls
+     * need never changes and the view never moves.</p>
+     */
+    private record Control(String label, String measure, Runnable action) {
+
+        Control(String label, Runnable action) {
+            this(label, label, action);
+        }
+    }
+
+    /** The controls under the preview, in the order they are laid out. */
+    private List<Control> controls() {
+        return controls(false);
+    }
+
+    /**
+     * The controls under the preview.
+     *
+     * <p>{@code forMeasuring} asks for every control that can ever appear
+     * rather than the ones showing now. The panel's height comes from how many
+     * rows the controls need, and the hand switch only exists on the figure
+     * view — measured from the live list, flipping views could add a row and
+     * move the preview, which is the one thing the two views must not do to
+     * each other.</p>
+     */
+    private List<Control> controls(boolean forMeasuring) {
+        List<Control> made = new ArrayList<>(7);
+        made.add(new Control(onFigure ? "Show model" : "Show on me",
+                wider("Show model", "Show on me"), this::flipView));
+        if (onFigure || forMeasuring) {
+            made.add(new Control(inOffhand() ? "Hold in hand" : "Wear on back",
+                    wider("Hold in hand", "Wear on back"), this::flipHand));
+        }
+        made.addAll(List.of(
+                new Control(autoRotate ? "Pause spin" : "Auto spin",
+                        wider("Pause spin", "Auto spin"), () -> autoRotate = !autoRotate),
+                new Control("Reset view", this::resetView),
+                new Control("Copy image", this::copyImage),
+                new Control("Save image", this::saveImage),
+                new Control("Animated preview", this::exportAnimation)));
+        return made;
+    }
+
+    /** Whichever of two labels takes more room. */
+    private String wider(String one, String other) {
+        return this.font.width(one) >= this.font.width(other) ? one : other;
+    }
+
+    /**
+     * Draws the model on your own figure.
+     *
+     * <p>The stack is built once, the first time the view is asked for, and
+     * not per frame: see {@link FigurePreview#show}. A model that cannot be
+     * put into anyone's hands says so rather than showing an empty figure,
+     * which would look like the model had failed to render.</p>
+     */
+    private void drawFigure(GuiGraphicsExtractor graphics, int drawX, int drawY,
+                            int box, int centreX, int centreY) {
+        if (!figureDressed) {
+            figure.show(figureStack(), inOffhand());
+            figureDressed = true;
+        }
+        boolean inWorld = McCompat.mc() != null && McCompat.mc().player != null;
+        if (!figure.hasItem() || !inWorld) {
+            // Two different answers, because they want different things of the
+            // player: one is this model, which no item can carry, and the
+            // other is this screen, which was opened without a world to take a
+            // skin and a figure from.
+            String message = !inWorld
+                    ? "Join a world to see this on yourself"
+                    : "There is no item to show this on";
+            GuiTheme.text(graphics, this.font, message,
+                    centreX - this.font.width(message) / 2, centreY - 4,
+                    GuiTheme.TEXT_MUTED, false);
+            return;
+        }
+        figure.draw(graphics, drawX, drawY, drawX + box, drawY + box, yaw, pitch, zoom);
+    }
+
+    /**
+     * The item the figure holds or wears: this model, on something that can
+     * carry it.
+     *
+     * <p>Conjured, looked at, and dropped when the screen closes. Nothing is
+     * given, applied or written — this mod still applies nothing — but the
+     * components are the ones a wrap would write, because a figure dressed by
+     * some other means would show a model the player could not actually get
+     * that way. See {@link WrapPreview}.</p>
+     */
+    private ItemStack figureStack() {
+        WrapTarget target = index.catalogue().byModel(model.defaultState().modelId());
+        String itemId = target != null ? itemToGive(target)
+                : model.baseItemIsRegistered() ? model.baseItemId() : "";
+        if (itemId.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack base = McCompat.buildStack(itemId, "");
+        if (base.isEmpty() || target == null) {
+            return base;
+        }
+        // Undressed rather than nothing when the appearance cannot be written:
+        // the shape of the thing on your head is still worth seeing, and the
+        // panel beside it already says what the model is.
+        ItemStack dressed = WrapPreview.dressed(base, target);
+        return dressed == null ? base : dressed;
+    }
+
+    /**
+     * Which item to put this model on.
+     *
+     * <p>An item the pack actually gives this model a number on, when it works
+     * that way. The compatible list can name an item whose definition mentions
+     * the model without giving it a value of its own, and dressing that one
+     * produces a stack the appearance then has to refuse.</p>
+     */
+    private String itemToGive(WrapTarget target) {
+        if (target.kind() == WrapTarget.Kind.CUSTOM_MODEL_DATA) {
+            for (String item : target.itemsWithValues()) {
+                return item;
+            }
+        }
+        if (!target.compatibleItems().isEmpty()) {
+            return target.compatibleItems().get(0);
+        }
+        return model.baseItemIsRegistered() ? model.baseItemId() : "";
+    }
+
+    /**
+     * Flips between the two views.
+     *
+     * <p>Letting go of the figure on the way out is what keeps the two from
+     * both existing: no mannequin, no stand-in head, nothing to animate. The
+     * stack is built again on the way back in, which costs one item lookup.</p>
+     */
+    private void flipView() {
+        onFigure = !onFigure;
+        CmvConfig config = CmvConfig.get();
+        config.figureInDetail = onFigure;
+        config.save();
+        if (!onFigure) {
+            figure.close();
+            figureDressed = false;
+        }
+    }
+
+    /**
+     * Whether the model is inferred to be worn from the offhand, or the player
+     * has said so.
+     *
+     * <p>Read off the model's own display transforms — see {@link
+     * FigurePreview#wantsOffhand}. The override is remembered per card rather
+     * than saved, because it is an answer about one model and not a
+     * preference.</p>
+     */
+    private boolean inOffhand() {
+        if (handChosen != null) {
+            return handChosen;
+        }
+        ResolvedModel resolved = model.defaultState().resolved();
+        return FigurePreview.wantsOffhand(
+                resolved.transform(THIRD_PERSON_LEFT),
+                resolved.transforms().containsKey(THIRD_PERSON_LEFT),
+                resolved.transform(THIRD_PERSON_RIGHT),
+                resolved.transforms().containsKey(THIRD_PERSON_RIGHT));
+    }
+
+    private static final String THIRD_PERSON_LEFT = "thirdperson_lefthand";
+    private static final String THIRD_PERSON_RIGHT = "thirdperson_righthand";
+
+    /** Puts the model in the other hand, and builds the figure's stack again. */
+    private void flipHand() {
+        handChosen = !inOffhand();
+        figureDressed = false;
+    }
+
+    /** The player's own answer about the hand, or null while the model's stands. */
+    private Boolean handChosen;
+
+    /**
+     * Where the figure is carrying the model, and on whose authority.
+     *
+     * <p>Said out loud because the offhand is an inference, and this screen's
+     * rule is that an inference is labelled as one. A player who sees wings on
+     * their back ought to be told that the model asked for that, not left to
+     * wonder why a feather went into the wrong hand.</p>
+     */
+    private String placement() {
+        net.minecraft.world.entity.EquipmentSlot where = figure.slot();
+        return switch (where) {
+            case HEAD -> "on your head";
+            case CHEST -> "on your chest";
+            case LEGS -> "on your legs";
+            case FEET -> "on your feet";
+            case OFFHAND -> "in your offhand" + (figure.slotFromItem() ? ""
+                    : handChosen != null ? "  (your choice)"
+                    : "  (the model asks for it)");
+            default -> "in your hand" + (handChosen != null ? "  (your choice)" : "");
+        };
     }
 
     private void resetView() {

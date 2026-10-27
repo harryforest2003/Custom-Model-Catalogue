@@ -21,5 +21,11 @@
     "java": ">=${java_release}",
     "fabric-api": "*"
   },
-  "suggests": {}
+  "suggests": {},
+  "mixins": [
+    {
+      "config": "cmvcatalogue.mixins.json",
+      "environment": "client"
+    }
+  ]
 }

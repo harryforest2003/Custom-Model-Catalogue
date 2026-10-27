@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "dev.custommodels.cmv.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "HumanoidArmorLayerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
