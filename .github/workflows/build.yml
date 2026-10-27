@@ -64,7 +64,7 @@ jobs:
           | `custom-model-catalogue-*+1.21.11.jar` | 1.21.11 |
 
           Needs Fabric Loader and Fabric API. Built by this repository's
-          workflow with all 571 checks passing.
+          workflow with all 655 checks passing, on every version listed.
           NOTES
           gh release create "${GITHUB_REF_NAME}" build/dist/*.jar \
             --title "${GITHUB_REF_NAME}" \

@@ -25,6 +25,16 @@ net.fabricmc.fabric.api.client.command.v2.ClientCommands=net.fabricmc.fabric.api
 ()graphics.itemDecorations=renderItemDecorations
 ()g.itemDecorations=renderItemDecorations
 
+# Drawing a living figure into a GUI panel, which is the whole of the figure
+# view's rendering. Same parameters in the same order; 26.2 shortened the name
+# and widened the vector types to their read-only interfaces, which the
+# concrete Vector3f and Quaternionf this mod passes satisfy either way.
+()graphics.entity=submitEntityRenderState
+
+# Charging the previewed crossbow. 26.2 gave `of` an ItemStackTemplate overload
+# and renamed the List one out of its way; here the List one is still `of`.
+()ChargedProjectiles.ofNonEmpty=of
+
 # Distinctive enough to rename wherever they appear, declarations included.
 setItemTransform=setTransform
 itemTransform=transform
