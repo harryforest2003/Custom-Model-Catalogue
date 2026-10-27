@@ -816,7 +816,10 @@ public final class DetailScreen extends Screen {
         String itemId = target != null ? itemToGive(target)
                 : model.baseItemIsRegistered() ? model.baseItemId() : "";
         if (itemId.isEmpty()) {
-            return ItemStack.EMPTY;
+            // No wrap and no real item named by the definition. The definition
+            // is still a file the game can draw, so a carrier is pointed
+            // straight at it.
+            return onCarrier();
         }
         ItemStack base = McCompat.buildStack(itemId, "");
         if (base.isEmpty() || target == null) {
@@ -838,15 +841,29 @@ public final class DetailScreen extends Screen {
      * produces a stack the appearance then has to refuse.</p>
      */
     private String itemToGive(WrapTarget target) {
-        if (target.kind() == WrapTarget.Kind.CUSTOM_MODEL_DATA) {
-            for (String item : target.itemsWithValues()) {
-                return item;
-            }
+        return WrapPreview.carrierFor(target, model.baseItemId(),
+                model.baseItemIsRegistered());
+    }
+
+    /**
+     * A carrier wearing the model's own item definition.
+     *
+     * <p>The last resort, for a model the catalogue found no wrap for and
+     * whose definition names no registered item. See {@link
+     * WrapPreview#definitionAsItemModel}.</p>
+     */
+    private ItemStack onCarrier() {
+        String itemModel = WrapPreview.definitionAsItemModel(model.definitionId());
+        Identifier id = itemModel.isEmpty() ? null : Identifier.tryParse(itemModel);
+        if (id == null) {
+            return ItemStack.EMPTY;
         }
-        if (!target.compatibleItems().isEmpty()) {
-            return target.compatibleItems().get(0);
+        ItemStack carrier = McCompat.buildStack(WrapPreview.CARRIER, "");
+        if (carrier.isEmpty()) {
+            return carrier;
         }
-        return model.baseItemIsRegistered() ? model.baseItemId() : "";
+        carrier.set(net.minecraft.core.component.DataComponents.ITEM_MODEL, id);
+        return carrier;
     }
 
     /**

@@ -3,6 +3,10 @@ import dev.custommodels.cmv.explorer.render.FigurePreview.Act;
 import dev.custommodels.cmv.explorer.render.FigurePreview.Beat;
 import dev.custommodels.cmv.core.FigurePlacements;
 import dev.custommodels.cmv.explorer.res.ModelJson;
+import dev.custommodels.cmv.explorer.graph.ItemType;
+import dev.custommodels.cmv.explorer.graph.ResolvedName;
+import dev.custommodels.cmv.wrap.WrapPreview;
+import dev.custommodels.cmv.wrap.WrapTarget;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemUseAnimation;
 
@@ -864,6 +868,78 @@ public final class FigureTest {
     }
 
 
+    /**
+     * What the figure is given to hold, when the pack names nothing holdable.
+     *
+     * <p>The case this exists for is the ordinary one in a pack that keeps its
+     * definitions in its own namespace. A definition at {@code
+     * lf:items/count_heart_of_the_sea.json} becomes an item_model wrap that
+     * fits anything, which is recorded as an empty compatibility list — and
+     * the item it is named after, {@code lf:count_heart_of_the_sea}, is not a
+     * registered item. So the pack offers the appearance on nothing in
+     * particular and names no real item, and the figure was handed an empty
+     * stack and said there was nothing to show it on. In the pack this was
+     * found against that is 4,483 definitions out of 4,840.</p>
+     */
+    private static void somethingToPutItOn() {
+        System.out.println();
+        System.out.println("what the figure is given to hold");
+
+        says("a wrap that fits anything goes on a carrier when nothing else can",
+                WrapPreview.carrierFor(universal(), "lf:count_heart_of_the_sea", false)
+                        .equals(WrapPreview.CARRIER));
+        says("and on the real item when the definition names one",
+                WrapPreview.carrierFor(universal(), "minecraft:paper", true)
+                        .equals("minecraft:paper"));
+        says("an item the pack lists wins over the carrier",
+                WrapPreview.carrierFor(fits("minecraft:diamond_sword"), "lf:x", false)
+                        .equals("minecraft:diamond_sword"));
+        says("and over the registered base item too, since the pack said so",
+                WrapPreview.carrierFor(fits("minecraft:diamond_sword"), "minecraft:paper", true)
+                        .equals("minecraft:diamond_sword"));
+        says("no wrap and no real item leaves nothing to put it on",
+                WrapPreview.carrierFor(null, "lf:x", false).isEmpty());
+        says("no wrap but a real item uses that item",
+                WrapPreview.carrierFor(null, "minecraft:paper", true)
+                        .equals("minecraft:paper"));
+        says("the carrier is a real item id",
+                WrapPreview.CARRIER.startsWith("minecraft:"));
+
+        says("a definition becomes the item_model that draws it",
+                WrapPreview.definitionAsItemModel("lf:items/count_heart_of_the_sea.json")
+                        .equals("lf:count_heart_of_the_sea"));
+        says("a nested definition keeps its folders",
+                WrapPreview.definitionAsItemModel("modelengine:items/nm_gnome_red/upperbody.json")
+                        .equals("modelengine:nm_gnome_red/upperbody"));
+        says("one already stripped is left alone",
+                WrapPreview.definitionAsItemModel("minecraft:bow").equals("minecraft:bow"));
+        says("nothing is not a definition",
+                WrapPreview.definitionAsItemModel(null).isEmpty());
+        says("and neither is a bare path with no namespace",
+                WrapPreview.definitionAsItemModel("items/bow.json").isEmpty());
+        says("a definition of only a namespace yields nothing",
+                WrapPreview.definitionAsItemModel("lf:items/.json").isEmpty());
+    }
+
+    /** An item_model wrap that fits anything: the empty compatibility list. */
+    private static WrapTarget universal() {
+        return target(WrapTarget.Kind.ITEM_MODEL, List.of());
+    }
+
+    /** An item_model wrap the pack says fits one named item. */
+    private static WrapTarget fits(String itemId) {
+        return target(WrapTarget.Kind.ITEM_MODEL, List.of(itemId));
+    }
+
+    private static WrapTarget target(WrapTarget.Kind kind, List<String> compatible) {
+        // The model is not read by anything under test, and building a real one
+        // needs a scan, so it is left out rather than faked into existence.
+        return new WrapTarget("test", new ResolvedName("Test",
+                ResolvedName.Source.ITEM_NAME, "test"), ItemType.ALL, kind,
+                "lf:count_heart_of_the_sea", "", List.of(), java.util.Map.of(),
+                compatible, null);
+    }
+
     public static void main(String[] args) {
 
         theBow();
@@ -876,6 +952,7 @@ public final class FigureTest {
         whatThePackRulesOut();
         rememberingTheChoice();
         notWritingForNothing();
+        somethingToPutItOn();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
