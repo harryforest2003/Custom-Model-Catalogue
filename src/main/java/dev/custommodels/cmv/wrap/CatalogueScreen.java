@@ -1,7 +1,6 @@
 package dev.custommodels.cmv.wrap;
 
 import dev.custommodels.cmv.compat.McCompat;
-import dev.custommodels.cmv.packs.ServerPackImport;
 import dev.custommodels.cmv.core.CmvConfig;
 import dev.custommodels.cmv.core.Keybinds;
 import dev.custommodels.cmv.explorer.scan.AtlasBudget;
@@ -363,57 +362,6 @@ public final class CatalogueScreen extends Screen {
         super(Component.literal("Catalogue"));
     }
 
-    /**
-     * Keeps the pack the current server sent, top right of the home page.
-     *
-     * <p>Greyed rather than hidden when there is nothing downloaded: a button
-     * that appears only sometimes is one nobody learns is there, and the
-     * tooltip is where the reason goes.</p>
-     */
-    private void drawImportButton(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
-        String label = "Keep server pack";
-        int width = this.font.width(label) + 16;
-        int x = this.width - PAD - width;
-        int y = 18;
-        boolean ready = ServerPackImport.available();
-        boolean hover = inside(mouseX, mouseY, x, y, width, 14);
-
-        GuiTheme.rect(graphics, x, y, x + width, y + 14,
-                hover && ready ? GuiTheme.CHIP_HOVER : GuiTheme.CHIP_FACE);
-        GuiTheme.border(graphics, x, y, width, 14,
-                ready ? (hover ? GuiTheme.ACCENT_BLUE : GuiTheme.BORDER) : GuiTheme.BORDER);
-        GuiTheme.text(graphics, this.font, label, x + 8, y + 3,
-                !ready ? GuiTheme.TEXT_MUTED
-                        : hover ? GuiTheme.TEXT_HEADING : GuiTheme.TEXT_DIM, false);
-
-        if (ready) {
-            hits.add(new Hit(x, y, width, 14, this::importServerPack));
-        }
-        if (hover) {
-            importTooltip = ready
-                    ? "Copies the pack this server sent into your resource packs, "
-                            + "names it after the server and updates it for this version."
-                    : "Nothing downloaded. Join a server with resource packs set to "
-                            + "Enabled, then come back.";
-        }
-    }
-
-    private void importServerPack() {
-        ServerPackImport.Report report = ServerPackImport.run();
-        importResult = switch (report.outcome()) {
-            case IMPORTED -> "Kept as " + report.file() + " \u2014 " + report.detail();
-            case ALREADY_HERE -> report.file() + " \u2014 " + report.detail();
-            case NOTHING_TO_IMPORT, FAILED -> report.detail();
-        };
-        if (report.worked()) {
-            // It is in the folder but not switched on, and the index only reads
-            // packs the game has loaded, so say what is left to do.
-            index.refresh();
-            AtlasBudget.invalidate();
-        }
-        rebuildHome();
-    }
-
     /** The item's registry id, or empty — all this screen wanted of the applier. */
     private static String itemIdOf(net.minecraft.world.item.ItemStack stack) {
         if (stack == null || stack.isEmpty()) {
@@ -712,7 +660,6 @@ public final class CatalogueScreen extends Screen {
         // can still open its menu under the pointer.
         lastMouseX = mouseX;
         lastMouseY = mouseY;
-        importTooltip = null;
         // Measured off-thread and only when out of date, so this is a no-op on
         // all but the first frame after a scan.
         if (tab == Tab.HOME) {
@@ -777,10 +724,6 @@ public final class CatalogueScreen extends Screen {
         if (picker.isOpen()) {
             GuiTheme.rect(graphics, 0, 0, this.width, this.height, GuiTheme.SCRIM);
             picker.draw(graphics, this.font, mouseX, mouseY);
-        }
-        if (importTooltip != null && !menuOpen() && pendingConfirm == null && !picker.isOpen()) {
-            GuiTheme.tooltip(graphics, this.font,
-                    wrapTooltip(importTooltip), mouseX, mouseY);
         }
         drawStatus(graphics);
     }
@@ -907,22 +850,17 @@ public final class CatalogueScreen extends Screen {
             }
         }
         GuiTheme.textRight(graphics, this.font, state, this.width - PAD, 8, stateColour);
-        if (tab == Tab.HOME) {
-            // The model count says nothing on this page, so the line it was
-            // using carries the one action the page offers instead.
-            drawImportButton(graphics, mouseX, mouseY);
-        } else {
+        if (tab != Tab.HOME) {
+            // The model count says nothing on the home page, which is prose
+            // rather than a grid.
             GuiTheme.textRight(graphics, this.font,
                     String.format(applying ? "%,d wraps" : "%,d models", shownCount()),
                     this.width - PAD, 20, GuiTheme.TEXT_DIM);
         }
     }
 
-    /** Set while the pointer is over the import button, cleared each frame. */
-    private String importTooltip;
-
-    /** The last import's outcome, shown under APPEARANCE until something else changes. */
-    private String importResult = "";
+    /** The last pack action's outcome, shown on the home page until something else changes. */
+    private String packResult = "";
 
     /**
      * The filters, as labels and whether each is doing anything.
@@ -1640,20 +1578,15 @@ public final class CatalogueScreen extends Screen {
                             + " remembered packs",
                     GuiTheme.TEXT_BRIGHT, false, () -> {
                 int restored = dev.custommodels.cmv.core.PackHistory.restore();
-                importResult = restored > 0
+                packResult = restored > 0
                         ? "Turned " + restored + " packs back on."
                         : "Nothing could be restored; the files are gone.";
                 rebuildHome();
             }));
         }
 
-        if (!importResult.isEmpty()) {
-            rows.add(new HomeRow("", 0, false));
-            rows.add(new HomeRow("SERVER PACK", 0, true));
-            rows.add(new HomeRow(importResult, GuiTheme.TEXT_DIM, false));
-            rows.add(new HomeRow("It is in your resource packs but not switched on. "
-                    + "Enable it in Options \u2192 Resource Packs.",
-                    GuiTheme.TEXT_MUTED, false));
+        if (!packResult.isEmpty()) {
+            rows.add(new HomeRow(packResult, GuiTheme.TEXT_DIM, false));
         }
 
         rows.add(new HomeRow("", 0, false));

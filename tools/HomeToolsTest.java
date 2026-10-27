@@ -1,7 +1,6 @@
 import dev.custommodels.cmv.explorer.scan.AtlasBudget;
 import dev.custommodels.cmv.gui.ColourPicker;
 import dev.custommodels.cmv.gui.GuiTheme;
-import dev.custommodels.cmv.packs.ServerPackImport;
 
 /**
  * The two pure pieces behind the home page's new controls.
@@ -20,29 +19,6 @@ public final class HomeToolsTest {
     private static int failed;
 
     public static void main(String[] args) {
-        // ---- server name to file name ----
-        eq("a plain name", ServerPackImport.fileNameFor("HeartSMP"), "HeartSMP.zip");
-        eq("spaces survive", ServerPackImport.fileNameFor("Lover Fella"), "Lover Fella.zip");
-        eq("colour codes are stripped",
-                ServerPackImport.fileNameFor("§4§lLOVERFELLA"), "LOVERFELLA.zip");
-        eq("a dotted address keeps its dots",
-                ServerPackImport.fileNameFor("play.hibiscusmc.com"),
-                "play.hibiscusmc.com.zip");
-        // The characters that would escape the folder, or that Windows refuses.
-        eq("slashes cannot escape the folder",
-                ServerPackImport.fileNameFor("../../etc/passwd"), "etc passwd.zip");
-        eq("colons and pipes go",
-                ServerPackImport.fileNameFor("a:b|c?d*e"), "a b c d e.zip");
-        eq("a name of only decoration still yields a file",
-                ServerPackImport.fileNameFor("§a§l"), "Server Pack.zip");
-        eq("an empty name yields a file",
-                ServerPackImport.fileNameFor(""), "Server Pack.zip");
-        check("a very long name is cut short",
-                ServerPackImport.fileNameFor("x".repeat(200)).length() <= 52);
-        check("no name ends up with a path separator",
-                !ServerPackImport.fileNameFor("a/b\\c").contains("/")
-                        && !ServerPackImport.fileNameFor("a/b\\c").contains("\\"));
-
         // ---- atlas sizing ----
         // The stitcher doubles until it fits, so the answer must step rather
         // than grow smoothly: one pixel over 4096x4096 costs a whole 8192.
