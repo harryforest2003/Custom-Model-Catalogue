@@ -1,8 +1,12 @@
 import dev.custommodels.cmv.explorer.render.FigurePreview;
 import dev.custommodels.cmv.explorer.render.FigurePreview.Act;
 import dev.custommodels.cmv.explorer.render.FigurePreview.Beat;
+import dev.custommodels.cmv.core.FigurePlacements;
+import dev.custommodels.cmv.explorer.res.ModelJson;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemUseAnimation;
+
+import java.util.List;
 
 /**
  * The figure view: where its loops have got to, and what it does with an item.
@@ -449,6 +453,416 @@ public final class FigureTest {
         says("and a declared nothing is not either",
                 !offhand(none, true, none, false));
     }
+    /**
+     * The placement cycle: that the control reaches everywhere, and comes back.
+     *
+     * <p>Worth a harness because the whole reason the cycle exists is that
+     * nothing can decide a placement from the item. A model drawn for a helmet
+     * gets applied to a pickaxe and a model drawn for a tool gets applied to a
+     * helmet, and from the item and the model alone those two are the same
+     * situation. So the only correct behaviour is to reach everywhere and let
+     * the person looking at it decide - which makes "everywhere is reachable"
+     * the property, and a cycle that quietly dropped a placement would be a
+     * thing you could only find by clicking a button six times.</p>
+     */
+    private static void everyPlacement() {
+        System.out.println();
+        System.out.println("the placements the control walks");
+
+        // A sword: equippable into nothing, so held. Both hands and the head.
+        List<EquipmentSlot> held = drawable(EquipmentSlot.MAINHAND);
+        says("something held offers both hands and the head", held.size() == 3
+                && held.contains(EquipmentSlot.MAINHAND)
+                && held.contains(EquipmentSlot.OFFHAND)
+                && held.contains(EquipmentSlot.HEAD));
+
+        // A helmet. The head is already in the cycle, so it is not offered twice.
+        List<EquipmentSlot> helmet = drawable(EquipmentSlot.HEAD);
+        says("a helmet offers both hands and the head, and the head once",
+                helmet.size() == 3 && helmet.contains(EquipmentSlot.HEAD));
+
+        // A shield. Likewise for the offhand.
+        List<EquipmentSlot> shield = drawable(EquipmentSlot.OFFHAND);
+        says("a shield offers both hands and the head, and the offhand once",
+                shield.size() == 3 && shield.contains(EquipmentSlot.OFFHAND));
+
+        // A chestplate. A hands-and-head cycle would never reach the one
+        // placement the thing was made for.
+        List<EquipmentSlot> chest = drawable(EquipmentSlot.CHEST);
+        says("chest armour is offered the chest as well", chest.size() == 4
+                && chest.contains(EquipmentSlot.CHEST));
+        says("and boots the feet",
+                drawable(EquipmentSlot.FEET)
+                        .contains(EquipmentSlot.FEET));
+
+        // A saddle names a slot a player has not got. It must not become a
+        // placement, or the control would step into a slot nothing draws.
+        says("a saddle adds no placement of its own",
+                drawable(EquipmentSlot.SADDLE).size() == 3);
+
+        // Every slot the game has: a cycle of placements a player can carry,
+        // no duplicates, and the hands and the head always in it.
+        boolean sane = true;
+        for (EquipmentSlot worn : EquipmentSlot.values()) {
+            List<EquipmentSlot> order = drawable(worn);
+            if (!order.contains(EquipmentSlot.MAINHAND)
+                    || !order.contains(EquipmentSlot.OFFHAND)
+                    || !order.contains(EquipmentSlot.HEAD)) {
+                sane = false;
+            }
+            for (EquipmentSlot each : order) {
+                if (each.getType() != EquipmentSlot.Type.HUMANOID_ARMOR
+                        && each.getType() != EquipmentSlot.Type.HAND) {
+                    sane = false;
+                }
+                if (order.indexOf(each) != order.lastIndexOf(each)) {
+                    sane = false;
+                }
+            }
+        }
+        says("every item's cycle holds both hands, the head, and no repeats",
+                sane);
+
+        // Stepping. From anywhere in a cycle, as many steps as it is long comes
+        // back to where it started, and visits the whole of it on the way.
+        boolean walks = true;
+        for (EquipmentSlot worn : EquipmentSlot.values()) {
+            List<EquipmentSlot> order = drawable(worn);
+            for (EquipmentSlot from : order) {
+                EquipmentSlot at = from;
+                boolean[] seen = new boolean[order.size()];
+                for (int step = 0; step < order.size(); step++) {
+                    at = FigurePreview.nextPlacement(order, at);
+                    int where = order.indexOf(at);
+                    if (where < 0 || seen[where]) {
+                        walks = false;
+                    } else {
+                        seen[where] = true;
+                    }
+                }
+                if (at != from) {
+                    walks = false;
+                }
+            }
+        }
+        says("the control reaches every placement and comes back to the first",
+                walks);
+
+        says("a step always lands somewhere, never on nothing",
+                FigurePreview.nextPlacement(drawable(EquipmentSlot.MAINHAND),
+                        EquipmentSlot.MAINHAND) != null);
+
+        // A placement from outside the cycle - a slot a future version adds,
+        // arriving here in a saved choice - starts it over rather than throwing.
+        says("a placement the cycle has never heard of starts it again",
+                FigurePreview.nextPlacement(drawable(EquipmentSlot.MAINHAND),
+                        EquipmentSlot.SADDLE) == EquipmentSlot.MAINHAND);
+
+        // Where the card opens, which is the one thing the cycle does not
+        // decide. What the item is worn as beats what the model asks for.
+        says("a helmet opens on the head, whatever its transforms ask",
+                FigurePreview.slotFor(EquipmentSlot.HEAD) == EquipmentSlot.HEAD);
+
+        // And worn is still worn: something on the head has nothing to do with
+        // its hands, however the placement got chosen.
+        says("a bow worn on the head is held, not drawn",
+                FigurePreview.actFor(ItemUseAnimation.BOW, EquipmentSlot.HEAD)
+                        == Act.HOLD);
+    }
+
+    // ------------------------------------------------- what the pack rules out
+
+    /** A transform that draws normally: everything the pack has not ruled out. */
+    private static ModelJson.Transform drawn() {
+        return ModelJson.Transform.IDENTITY;
+    }
+
+    /** A cycle for a model the pack draws everywhere. */
+    private static java.util.List<EquipmentSlot> drawable(EquipmentSlot worn) {
+        return FigurePreview.placements(worn, drawn(), drawn(), drawn());
+    }
+
+    /** The transform packs use to say "not here": a scale of nothing. */
+    private static ModelJson.Transform collapsed() {
+        return new ModelJson.Transform(new float[]{0, 0, 0},
+                new float[]{0, 0, 0}, new float[]{0, 0, 0});
+    }
+
+    /**
+     * Placements the pack has ruled out, and the one reading that is not a guess.
+     *
+     * <p>Read off the pack set this was developed against: 22 of the 87 models
+     * that declare a head transform declare it zero-scaled, and no model in
+     * either pack zero-scales anything else. So this is the pack saying "not
+     * here" and it is the only part of a placement that is not undecidable.</p>
+     */
+    private static void whatThePackRulesOut() {
+        System.out.println();
+        System.out.println("placements the pack rules out");
+
+        says("a transform that draws normally rules nothing out",
+                !FigurePreview.drawsNothing(ModelJson.Transform.IDENTITY));
+        says("a zero scale on every axis rules the placement out",
+                FigurePreview.drawsNothing(collapsed()));
+
+        // One axis is enough: the geometry is flat either way.
+        says("a zero on one axis alone is enough",
+                FigurePreview.drawsNothing(new ModelJson.Transform(
+                        new float[]{0, 0, 0}, new float[]{0, 0, 0},
+                        new float[]{1, 0, 1})));
+
+        // The real shape of the thing in the packs: translation, no scale key.
+        // Scaling by nothing and saying nothing about scale are opposites, and
+        // a helmet that only nudges itself down must not be read as ruled out.
+        says("a transform with a translation and no scale draws",
+                !FigurePreview.drawsNothing(new ModelJson.Transform(
+                        null, new float[]{0, -3.25F, 0}, null)));
+        says("and nothing at all draws",
+                !FigurePreview.drawsNothing(null));
+
+        // A chestplate of one of those armour sets: zero-scaled on the head,
+        // so the head is not offered, and the chest still is.
+        java.util.List<EquipmentSlot> vest = FigurePreview.placements(
+                EquipmentSlot.CHEST, drawn(), drawn(), collapsed());
+        says("a model zero-scaled on the head is not offered the head",
+                !vest.contains(EquipmentSlot.HEAD));
+        says("and is still offered both hands and its own chest",
+                vest.size() == 3 && vest.contains(EquipmentSlot.MAINHAND)
+                        && vest.contains(EquipmentSlot.OFFHAND)
+                        && vest.contains(EquipmentSlot.CHEST));
+
+        // The helmet from the same set, which gives a real head transform.
+        java.util.List<EquipmentSlot> helm = FigurePreview.placements(
+                EquipmentSlot.HEAD, drawn(), drawn(), drawn());
+        says("the helmet beside it keeps the head", helm.contains(EquipmentSlot.HEAD));
+
+        // Where the item is worn wins over a transform that rules it out: the
+        // armour layer draws it there whatever the model's own transform says.
+        java.util.List<EquipmentSlot> odd = FigurePreview.placements(
+                EquipmentSlot.HEAD, drawn(), drawn(), collapsed());
+        says("a helmet that rules out its own head is still offered the head",
+                odd.contains(EquipmentSlot.HEAD));
+
+        // A pack that ruled out everything still leaves somewhere to look.
+        java.util.List<EquipmentSlot> none = FigurePreview.placements(
+                EquipmentSlot.MAINHAND, collapsed(), collapsed(), collapsed());
+        says("a model ruled out of everywhere still has one placement",
+                none.size() == 1 && none.contains(EquipmentSlot.MAINHAND));
+
+        // And the cycle still steps, rather than dividing by a length of none.
+        boolean steps = true;
+        try {
+            if (FigurePreview.nextPlacement(none, EquipmentSlot.MAINHAND)
+                    != EquipmentSlot.MAINHAND) {
+                steps = false;
+            }
+        } catch (RuntimeException e) {
+            steps = false;
+        }
+        says("a cycle of one steps to itself", steps);
+
+        // Opening. A placement the cycle cannot reach is snapped into it, so
+        // the card never opens somewhere the control cannot return to.
+        says("an opening placement the cycle has is kept",
+                FigurePreview.openAt(vest, EquipmentSlot.OFFHAND)
+                        == EquipmentSlot.OFFHAND);
+        says("one it has not is snapped to the first it does",
+                FigurePreview.openAt(vest, EquipmentSlot.HEAD)
+                        == vest.get(0));
+
+        // Hands are filtered by the same rule, not special-cased to the head.
+        // No pack in the set does this, and the code should not care.
+        java.util.List<EquipmentSlot> hatOnly = FigurePreview.placements(
+                EquipmentSlot.MAINHAND, collapsed(), collapsed(), drawn());
+        says("a model ruled out of both hands is offered the head",
+                hatOnly.contains(EquipmentSlot.HEAD));
+        says("and the hand it is held in, because that is where it belongs",
+                hatOnly.contains(EquipmentSlot.MAINHAND));
+    }
+
+    // ------------------------------------------------- remembering the choice
+
+    /**
+     * Reading a saved placement back, which happens from a file people edit.
+     *
+     * <p>Worth a harness for one reason: {@code EquipmentSlot.byName} throws on
+     * anything it does not recognise, so the obvious way to write this turns a
+     * typo in a config file into a card that will not open. Every one of these
+     * asks whether a bad value is survived.</p>
+     */
+    private static void rememberingTheChoice() {
+        System.out.println();
+        System.out.println("reading a saved placement back");
+
+        // Every slot the game has round-trips through its own name. This is the
+        // property that matters: what is written is what comes back.
+        boolean roundTrips = true;
+        for (EquipmentSlot slot : EquipmentSlot.values()) {
+            if (FigurePreview.placementByName(slot.getSerializedName()) != slot) {
+                roundTrips = false;
+            }
+        }
+        says("every slot round-trips through the name it is saved as", roundTrips);
+
+        says("mainhand reads back as the main hand",
+                FigurePreview.placementByName("mainhand") == EquipmentSlot.MAINHAND);
+        says("offhand as the offhand",
+                FigurePreview.placementByName("offhand") == EquipmentSlot.OFFHAND);
+        says("head as the head",
+                FigurePreview.placementByName("head") == EquipmentSlot.HEAD);
+
+        // Nothing saved, which is every model nobody has moved.
+        says("nothing saved is no choice",
+                FigurePreview.placementByName(null) == null);
+        says("and an empty value is no choice either",
+                FigurePreview.placementByName("") == null);
+
+        // A file edited by hand. None of these may throw, and none may guess.
+        String[] wrong = {"MAINHAND", "Head", " head", "head ", "main_hand",
+                "hand", "1", "3", "0", "-1", "null", "offhandd", "\u00e9t\u00eate"};
+        boolean survived = true;
+        for (String each : wrong) {
+            try {
+                if (FigurePreview.placementByName(each) != null) {
+                    survived = false;
+                }
+            } catch (RuntimeException e) {
+                survived = false;
+            }
+        }
+        says("a name the game does not use is no choice, and does not throw",
+                survived);
+
+        // The numbering that was considered and not used. If these ever read as
+        // placements, something has started inventing its own scheme.
+        says("a number is not a placement",
+                FigurePreview.placementByName("2") == null);
+
+        // A saved placement the model can no longer be seen in. The pack may
+        // have ruled it out since it was chosen, and the card still has to open.
+        java.util.List<EquipmentSlot> vest = FigurePreview.placements(
+                EquipmentSlot.CHEST, drawn(), drawn(), collapsed());
+        EquipmentSlot saved = FigurePreview.placementByName("head");
+        says("a saved placement the pack has since ruled out is snapped into the cycle",
+                FigurePreview.openAt(vest, saved) == vest.get(0));
+        says("and one it still allows is kept",
+                FigurePreview.openAt(vest, FigurePreview.placementByName("chest"))
+                        == EquipmentSlot.CHEST);
+
+        // A slot a player has not got, saved by hand. It parses - it is a real
+        // slot - and the cycle is what refuses it.
+        says("a slot a player has not got never survives the cycle",
+                FigurePreview.openAt(vest, FigurePreview.placementByName("saddle"))
+                        == vest.get(0));
+    }
+
+    // ------------------------------------------------- not writing for nothing
+
+    /** The placements a file holds, as the store would spell them. */
+    private static String onDisk(String... pairs) {
+        java.util.Map<String, String> held = new java.util.TreeMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            held.put(pairs[i], pairs[i + 1]);
+        }
+        return FigurePlacements.pending(held, null);
+    }
+
+    /**
+     * Whether leaving the viewer writes anything, and when it should not.
+     *
+     * <p>The case this is really about: open one card, cycle the placement all
+     * the way round, and end on the one that was already saved. Every single
+     * step of that is a change measured against the step before it, so a store
+     * that asked "did this click change anything" would write a file identical
+     * to the one already there. Measured against the file, nothing changed and
+     * nothing should be written — which also means no write, no filesystem,
+     * and none of the tail that comes with touching it.</p>
+     */
+    private static void notWritingForNothing() {
+        System.out.println();
+        System.out.println("leaving the viewer without writing for nothing");
+
+        String saved = onDisk("pack:item/tools/pickaxe", "head");
+
+        // The whole point. head -> mainhand -> offhand -> head, as the control
+        // steps it, and the map ends up exactly as the file already has it.
+        java.util.Map<String, String> live = new java.util.TreeMap<>();
+        live.put("pack:item/tools/pickaxe", "head");
+        live.put("pack:item/tools/pickaxe", "mainhand");
+        live.put("pack:item/tools/pickaxe", "offhand");
+        live.put("pack:item/tools/pickaxe", "head");
+        says("cycling round to where it started writes nothing",
+                FigurePlacements.pending(live, saved) == null);
+
+        // Stopping one short of where it started does write.
+        live.put("pack:item/tools/pickaxe", "mainhand");
+        says("stopping anywhere else writes",
+                FigurePlacements.pending(live, saved) != null);
+
+        // Two placements of the same length. head, legs and feet are all four
+        // letters, so this is the case that tells comparing the content apart
+        // from comparing how much of it there is. Without it, a check on the
+        // length alone passes everything here.
+        java.util.Map<String, String> sameLength = new java.util.TreeMap<>();
+        sameLength.put("pack:item/tools/pickaxe", "feet");
+        says("a different placement of the very same length still writes",
+                FigurePlacements.pending(sameLength, saved) != null);
+        says("and the two names really are the same length",
+                "head".length() == "feet".length());
+
+        // A second model moved in the same session is a change even though the
+        // first one went back to where it was.
+        java.util.Map<String, String> two = new java.util.TreeMap<>();
+        two.put("pack:item/tools/pickaxe", "head");
+        two.put("pack:item/hats/crown", "mainhand");
+        says("another model moved in the same session writes",
+                FigurePlacements.pending(two, saved) != null);
+
+        // Nothing touched at all.
+        java.util.Map<String, String> same = new java.util.TreeMap<>();
+        same.put("pack:item/tools/pickaxe", "head");
+        says("a session that moved nothing writes nothing",
+                FigurePlacements.pending(same, saved) == null);
+
+        // The order things were put in must not count as a change, or every
+        // session would write: a card visited in a different order is normal.
+        // Inserted the other way round from how they sort - pickaxe before
+        // crown, where crown sorts first - because an insertion order that is
+        // already the sorted one would not notice the sorting going missing.
+        java.util.Map<String, String> reordered = new java.util.LinkedHashMap<>();
+        reordered.put("pack:item/tools/pickaxe", "head");
+        reordered.put("pack:item/hats/crown", "mainhand");
+        says("the order they were moved in is not a change",
+                FigurePlacements.pending(reordered, onDisk(
+                        "pack:item/tools/pickaxe", "head",
+                        "pack:item/hats/crown", "mainhand")) == null);
+        says("and that order is not the sorted one, so the check means something",
+                "pack:item/tools/pickaxe".compareTo("pack:item/hats/crown") > 0);
+
+        // An empty session against an empty file: no write, and so no file
+        // created to say that nothing was chosen.
+        says("an empty session against no file at all writes nothing",
+                FigurePlacements.pending(new java.util.TreeMap<>(), onDisk()) == null);
+
+        // A first placement, with no file yet.
+        java.util.Map<String, String> first = new java.util.TreeMap<>();
+        first.put("pack:item/hats/crown", "head");
+        says("the first placement ever chosen writes",
+                FigurePlacements.pending(first, onDisk()) != null);
+
+        // Never read or written. Everything is a change against nothing.
+        says("with nothing known about the file, a write is taken",
+                FigurePlacements.pending(first, null) != null);
+
+        // What gets written is readable, and reads back as what it says.
+        String written = FigurePlacements.pending(first, null);
+        says("what is written names the model and the slot",
+                written != null && written.contains("pack:item/hats/crown")
+                        && written.contains("head"));
+        says("and the slot in it parses back to the slot",
+                FigurePreview.placementByName("head") == EquipmentSlot.HEAD);
+    }
+
 
     public static void main(String[] args) {
 
@@ -458,6 +872,10 @@ public final class FigureTest {
         whatGoesWhere();
         whichWay();
         wingsAndBacks();
+        everyPlacement();
+        whatThePackRulesOut();
+        rememberingTheChoice();
+        notWritingForNothing();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");

@@ -216,6 +216,13 @@ public final class ExplorerIndex {
             cancelActive();
             previews.releaseAll();
             shutdownWorker();
+            // Placements changed anywhere in the viewer are written here, once,
+            // rather than by each card on its way out. Moving six models across
+            // six cards is one write when the viewer closes instead of six as
+            // you go. This is the right place for it because of the check
+            // above: card to grid and back drops the count to nothing and puts
+            // it back before this runs, so only actually leaving reaches here.
+            dev.custommodels.cmv.core.FigurePlacements.flush();
         });
     }
 

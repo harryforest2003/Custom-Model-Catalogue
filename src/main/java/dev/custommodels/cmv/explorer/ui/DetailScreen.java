@@ -3,6 +3,7 @@ package dev.custommodels.cmv.explorer.ui;
 import dev.custommodels.cmv.compat.McCompat;
 import dev.custommodels.cmv.core.CmvConfig;
 import dev.custommodels.cmv.core.CmvMod;
+import dev.custommodels.cmv.core.FigurePlacements;
 import dev.custommodels.cmv.explorer.def.Selector;
 import dev.custommodels.cmv.explorer.export.ImageExport;
 import dev.custommodels.cmv.wrap.WrapPreview;
@@ -18,6 +19,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.resources.Identifier;
 
@@ -108,6 +110,10 @@ public final class DetailScreen extends Screen {
         this.model = model;
         this.parent = parent;
         this.stateIndex = model.defaultStateIndex();
+        // Read here rather than when the figure is first dressed, so the card
+        // opens where it was left even on the frame the figure view appears.
+        this.placeChosen = FigurePreview.placementByName(
+                FigurePlacements.get(placementKey()));
     }
 
     @Override
@@ -120,6 +126,8 @@ public final class DetailScreen extends Screen {
 
     @Override
     public void removed() {
+        // The placement is not written here. closeViewer does it, and only when
+        // the last viewer screen has really gone: see FigurePlacements.
         index.closeViewer();
         figure.close();
         super.removed();
@@ -737,9 +745,16 @@ public final class DetailScreen extends Screen {
         List<Control> made = new ArrayList<>(7);
         made.add(new Control(onFigure ? "Show model" : "Show on me",
                 wider("Show model", "Show on me"), this::flipView));
-        if (onFigure || forMeasuring) {
-            made.add(new Control(inOffhand() ? "Hold in hand" : "Wear on back",
-                    wider("Hold in hand", "Wear on back"), this::flipHand));
+        if (forMeasuring) {
+            // Named at its widest and never asked where the model would go:
+            // working that out needs a figure, and the view this is measuring
+            // for is the one that has just put its figure away. Always counted,
+            // so neither flipping views nor opening an item with fewer
+            // placements can change how many rows the controls need.
+            made.add(new Control(widestPlaceName(), this::flipPlacement));
+        } else if (onFigure && placeChoosable()) {
+            made.add(new Control(placeName(placeNext()), widestPlaceName(),
+                    this::flipPlacement));
         }
         made.addAll(List.of(
                 new Control(autoRotate ? "Pause spin" : "Auto spin",
@@ -767,8 +782,7 @@ public final class DetailScreen extends Screen {
     private void drawFigure(GuiGraphicsExtractor graphics, int drawX, int drawY,
                             int box, int centreX, int centreY) {
         if (!figureDressed) {
-            figure.show(figureStack(), inOffhand());
-            figureDressed = true;
+            dressFigure();
         }
         boolean inWorld = McCompat.mc() != null && McCompat.mc().player != null;
         if (!figure.hasItem() || !inWorld) {
@@ -854,18 +868,33 @@ public final class DetailScreen extends Screen {
     }
 
     /**
-     * Whether the model is inferred to be worn from the offhand, or the player
-     * has said so.
+     * Builds the figure's stack and settles where the model goes.
+     *
+     * <p>Both at once, because the placement is read off the stack: what the
+     * item is worn as decides where the card opens, and which placements the
+     * control walks.</p>
+     */
+    private void dressFigure() {
+        ItemStack stack = figureStack();
+        ResolvedModel resolved = model.defaultState().resolved();
+        placeOrder = FigurePreview.placements(FigurePreview.slotFor(stack),
+                resolved.transform(THIRD_PERSON_RIGHT),
+                resolved.transform(THIRD_PERSON_LEFT),
+                resolved.transform(HEAD_CONTEXT));
+        EquipmentSlot opening = placeChosen != null ? placeChosen
+                : FigurePreview.placeFor(stack, modelWantsOffhand());
+        figure.show(stack, FigurePreview.openAt(placeOrder, opening));
+        figureDressed = true;
+    }
+
+    /**
+     * Whether the model is drawn to be worn from the offhand.
      *
      * <p>Read off the model's own display transforms — see {@link
-     * FigurePreview#wantsOffhand}. The override is remembered per card rather
-     * than saved, because it is an answer about one model and not a
-     * preference.</p>
+     * FigurePreview#wantsOffhand}. It decides where the card opens and nothing
+     * more; the control reaches every placement whatever this says.</p>
      */
-    private boolean inOffhand() {
-        if (handChosen != null) {
-            return handChosen;
-        }
+    private boolean modelWantsOffhand() {
         ResolvedModel resolved = model.defaultState().resolved();
         return FigurePreview.wantsOffhand(
                 resolved.transform(THIRD_PERSON_LEFT),
@@ -874,38 +903,156 @@ public final class DetailScreen extends Screen {
                 resolved.transforms().containsKey(THIRD_PERSON_RIGHT));
     }
 
+    // Display transform names, spelled as the pack files spell them.
     private static final String THIRD_PERSON_LEFT = "thirdperson_lefthand";
     private static final String THIRD_PERSON_RIGHT = "thirdperson_righthand";
+    private static final String HEAD_CONTEXT = "head";
 
-    /** Puts the model in the other hand, and builds the figure's stack again. */
-    private void flipHand() {
-        handChosen = !inOffhand();
+    /**
+     * The placement the control would move to, which is what it is labelled
+     * with.
+     *
+     * <p>Dressing first if the figure has not been dressed yet: the cycle is
+     * built from the item, so there is nothing to step through until there is
+     * a stack. Only ever reached with the figure view open.</p>
+     */
+    private EquipmentSlot placeNext() {
+        if (!figureDressed) {
+            dressFigure();
+        }
+        return FigurePreview.nextPlacement(placeOrder, figure.slot());
+    }
+
+    /**
+     * Whether the model has more than one placement to be seen in.
+     *
+     * <p>A model the pack has ruled out of everywhere but one place gets no
+     * control, rather than a button that says where it already is.</p>
+     */
+    private boolean placeChoosable() {
+        if (!figureDressed) {
+            dressFigure();
+        }
+        return placeOrder.size() > 1;
+    }
+
+    /**
+     * Moves the model to the next placement, remembers it, and dresses the
+     * figure again.
+     *
+     * <p>Saved against the model rather than kept for this card, so a model
+     * whose default is wrong for it is wrong once. Written on the click, the
+     * way the view switch writes its own setting.</p>
+     */
+    private void flipPlacement() {
+        placeChosen = placeNext();
+        // Remembered at once, so another card opened on this model agrees with
+        // this one, and written when the viewer closes rather than now.
+        FigurePlacements.set(placementKey(), placeChosen.getSerializedName());
         figureDressed = false;
     }
 
-    /** The player's own answer about the hand, or null while the model's stands. */
-    private Boolean handChosen;
+    /**
+     * What a saved placement is filed under: the model, not the item.
+     *
+     * <p>One model can be reached through several items and several pieces of
+     * custom model data, and where its geometry wants to sit is a property of
+     * the geometry. Filing it under the item would ask the same question again
+     * for every item that happens to carry it.</p>
+     */
+    private String placementKey() {
+        return model.defaultState().modelId();
+    }
+
+    /**
+     * The player's own answer about the placement, or null while the card's
+     * stands.
+     *
+     * <p>Loaded from the saved placements when the card opens and written back
+     * when the control is clicked, so it is an answer given once per model
+     * rather than once per visit.</p>
+     */
+    private EquipmentSlot placeChosen;
+
+    /**
+     * The placements the open model can be seen in, settled when the figure is
+     * dressed.
+     *
+     * <p>Held rather than recomputed so that the button's label, the step it
+     * takes and whether it appears at all are all reading one list.</p>
+     */
+    private List<EquipmentSlot> placeOrder = List.of(EquipmentSlot.MAINHAND);
+
+    private static final String IN_HAND = "Hold in hand";
+    private static final String IN_OFFHAND = "Hold in offhand";
+    private static final String ON_HEAD = "Wear on head";
+    private static final String ON_CHEST = "Wear on chest";
+    private static final String ON_LEGS = "Wear on legs";
+    private static final String ON_FEET = "Wear on feet";
+
+    /**
+     * Every label the placement control can carry.
+     *
+     * <p>Held as a list so the control can be measured at its widest without
+     * knowing which item is open. The panel's height comes from how many rows
+     * the labels need, and an item whose cycle happened to contain a longer
+     * word would otherwise move the preview the moment it was opened.</p>
+     */
+    private static final String[] PLACE_NAMES = {
+            IN_HAND, IN_OFFHAND, ON_HEAD, ON_CHEST, ON_LEGS, ON_FEET };
+
+    /** What to call a placement on the button that moves to it. */
+    private static String placeName(EquipmentSlot where) {
+        return switch (where) {
+            case OFFHAND -> IN_OFFHAND;
+            case HEAD -> ON_HEAD;
+            case CHEST -> ON_CHEST;
+            case LEGS -> ON_LEGS;
+            case FEET -> ON_FEET;
+            default -> IN_HAND;
+        };
+    }
+
+    private String widestPlaceName() {
+        String widest = PLACE_NAMES[0];
+        for (String name : PLACE_NAMES) {
+            if (this.font.width(name) > this.font.width(widest)) {
+                widest = name;
+            }
+        }
+        return widest;
+    }
 
     /**
      * Where the figure is carrying the model, and on whose authority.
      *
-     * <p>Said out loud because the offhand is an inference, and this screen's
-     * rule is that an inference is labelled as one. A player who sees wings on
+     * <p>Said out loud because where it opened is a guess twice over: the
+     * offhand is inferred from a display transform, and the head is taken from
+     * a component that packs routinely contradict. A player who sees wings on
      * their back ought to be told that the model asked for that, not left to
-     * wonder why a feather went into the wrong hand.</p>
+     * wonder why a feather went into the wrong hand — and a player holding
+     * something that plainly wants to be a hat ought to see that nothing has
+     * decided that for them.</p>
      */
     private String placement() {
-        net.minecraft.world.entity.EquipmentSlot where = figure.slot();
-        return switch (where) {
+        EquipmentSlot where = figure.slot();
+        String said = switch (where) {
             case HEAD -> "on your head";
             case CHEST -> "on your chest";
             case LEGS -> "on your legs";
             case FEET -> "on your feet";
-            case OFFHAND -> "in your offhand" + (figure.slotFromItem() ? ""
-                    : handChosen != null ? "  (your choice)"
-                    : "  (the model asks for it)");
-            default -> "in your hand" + (handChosen != null ? "  (your choice)" : "");
+            case OFFHAND -> "in your offhand";
+            default -> "in your hand";
         };
+        if (placeChosen != null) {
+            return said + "  (your choice)";
+        }
+        if (figure.slotFromItem()) {
+            // The item is worn there and says so. Nothing to explain.
+            return said;
+        }
+        return where == EquipmentSlot.OFFHAND
+                ? said + "  (the model asks for it)" : said;
     }
 
     private void resetView() {

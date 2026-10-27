@@ -21,6 +21,7 @@ import net.minecraft.world.level.Level;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -290,21 +291,189 @@ public final class FigurePreview {
      * slot a player has not got, so those are held like anything else.</p>
      */
     public static EquipmentSlot slotFor(ItemStack stack) {
-        return slotFor(stack, false);
+        Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
+        return slotFor(equippable == null ? null : equippable.slot());
     }
 
     /**
-     * Where an item goes, given what the model said about the offhand.
+     * Where an item goes before anyone has said otherwise.
      *
-     * <p>What the item is worn as still wins. Something equippable has a slot
-     * of its own and a display transform cannot argue with it: a helmet goes on
-     * the head whatever its {@code thirdperson_lefthand} says.</p>
+     * <p>What the item is worn as wins over what the model asks for. Something
+     * equippable has a slot of its own and a display transform cannot argue
+     * with it: a helmet opens on the head whatever its {@code
+     * thirdperson_lefthand} says.</p>
+     *
+     * <p>This only settles where the card <em>opens</em>. Every placement is
+     * reachable from the control either way - see {@link #placements} — because
+     * neither answer can be trusted far enough to be the only one offered.</p>
      */
-    public static EquipmentSlot slotFor(ItemStack stack, boolean preferOffhand) {
-        Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
-        EquipmentSlot worn = slotFor(equippable == null ? null : equippable.slot());
-        return worn == EquipmentSlot.MAINHAND && preferOffhand
+    public static EquipmentSlot placeFor(ItemStack stack, boolean modelWantsOffhand) {
+        EquipmentSlot worn = slotFor(stack);
+        return worn == EquipmentSlot.MAINHAND && modelWantsOffhand
                 ? EquipmentSlot.OFFHAND : worn;
+    }
+
+    /**
+     * Every placement the card offers for an item, in the order it walks them.
+     *
+     * <p>Both hands and the head, always, plus whatever else the item is worn
+     * as. The reason it is not narrowed to what the item claims is that the
+     * claim and the model disagree all the time and nothing can tell which is
+     * right:</p>
+     *
+     * <ul>
+     *   <li>A model drawn to be worn on the head gets applied to a pickaxe,
+     *       which says it is equippable into nothing. Opened in the hand it is
+     *       a pickaxe-shaped hat lying on its side.</li>
+     *   <li>A model drawn to be held gets applied to a helmet, which says it is
+     *       equippable onto the head. Opened on the head it is a tool balanced
+     *       on someone's scalp.</li>
+     * </ul>
+     *
+     * <p>Those two are the same situation read from opposite ends, so no test
+     * separates them - a helmet carrying a tool's model and a tool carrying a
+     * helmet's model are indistinguishable from the item and the model alone.
+     * What settles it is the person looking at it, so the control reaches
+     * everywhere and the card says where it has got to.</p>
+     *
+     * <p>The head is offered for everything rather than for suspected hats,
+     * because the game draws a non-armour item on a head as its own model at
+     * whatever its {@code head} display transform asks for. Read out of the
+     * 26.2 assets: {@code item/generated} declares that transform and {@code
+     * item/handheld} and {@code item/bow} inherit it, so every sword, pickaxe
+     * and bow lands on a head properly. {@code item/shield} declares neither it
+     * nor a parent, and falls back to no transform rather than to nothing
+     * drawn - unpositioned, but still something to look at.</p>
+     *
+     * <p>A placement the pack has ruled out is left off, so the control only
+     * ever offers positions the model can actually be seen in: see {@link
+     * #drawsNothing}. The slot the item is worn in is always offered, since
+     * that is where it goes whatever a transform says about it.</p>
+     *
+     * @param worn      the slot the item is worn in, from {@link
+     *                  #slotFor(ItemStack)}
+     * @param inHand    the model's resolved {@code thirdperson_righthand}
+     * @param inOffhand its resolved {@code thirdperson_lefthand}
+     * @param onHead    its resolved {@code head}
+     */
+    public static List<EquipmentSlot> placements(EquipmentSlot worn,
+            ModelJson.Transform inHand, ModelJson.Transform inOffhand,
+            ModelJson.Transform onHead) {
+        List<EquipmentSlot> order = new ArrayList<>(4);
+        offer(order, EquipmentSlot.MAINHAND, inHand);
+        offer(order, EquipmentSlot.OFFHAND, inOffhand);
+        offer(order, EquipmentSlot.HEAD, onHead);
+        EquipmentSlot carried = slotFor(worn);
+        if (!order.contains(carried)) {
+            // Either armour for the chest, legs or feet - which a hand-and-head
+            // cycle would never reach - or a placement a transform ruled out
+            // that the item is nonetheless worn in. Both belong in the cycle,
+            // and adding it here is also what keeps the cycle from ever being
+            // empty.
+            order.add(carried);
+        }
+        return order;
+    }
+
+    /** Adds a placement unless the model would draw nothing there. */
+    private static void offer(List<EquipmentSlot> order, EquipmentSlot where,
+            ModelJson.Transform through) {
+        if (!drawsNothing(through)) {
+            order.add(where);
+        }
+    }
+
+    /**
+     * Whether a display transform collapses the model to nothing.
+     *
+     * <p>A scale of zero on any axis flattens the geometry away, and packs use
+     * that deliberately: it is how an author says "not here". Across the pack
+     * set this was developed against, 22 of the 87 models that declare a {@code
+     * head} transform declare it as {@code "scale": [0, 0, 0]} - the chestplates,
+     * leggings and boots of armour sets whose helmet, in the same folder, gives
+     * a real one. Not one model in either pack zero-scales any other context,
+     * so the idiom is used for exactly this and the reading is not a guess.</p>
+     *
+     * <p>That makes it the one honest way to shorten the cycle. Everything else
+     * about a placement is undecidable - see {@link #placements} - but a
+     * transform that draws nothing is the pack stating the answer, and a
+     * position where nothing appears is not a position worth clicking to.</p>
+     *
+     * <p>Checked rather than assumed: a declared transform may give a
+     * translation and no scale at all, which scales by one and draws
+     * normally.</p>
+     */
+    public static boolean drawsNothing(ModelJson.Transform transform) {
+        if (transform == null) {
+            return false;
+        }
+        float[] scale = transform.scale();
+        if (scale == null) {
+            return false;
+        }
+        for (float each : scale) {
+            if (each == 0.0F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The placement after the one showing now, wrapping round.
+     *
+     * <p>A placement that is not in the cycle starts it from the beginning
+     * rather than throwing, which is what happens if a future version adds a
+     * slot and something arrives here holding it. That needs no branch of its
+     * own: {@code indexOf} answers -1, and a step from -1 is the first entry.
+     * A guard was written for it and the checks proved it dead.</p>
+     *
+     * <p>Takes the cycle rather than rebuilding it, because the screen has
+     * already worked it out and the two must not disagree about what the next
+     * placement is.</p>
+     */
+    public static EquipmentSlot nextPlacement(List<EquipmentSlot> order, EquipmentSlot now) {
+        int at = order.indexOf(now);
+        return order.get((at + 1) % order.size());
+    }
+
+    /**
+     * A placement read back from a saved name, or null when there is none.
+     *
+     * <p>Deliberately not {@code EquipmentSlot.byName}, which throws an
+     * {@code IllegalArgumentException} on anything it does not recognise —
+     * verified in the 26.2 bytecode. The name here comes out of a file a person
+     * can edit, so a typo in it has to mean "no choice saved" and not a card
+     * that will not open.</p>
+     *
+     * <p>Nothing is filtered here. A saved placement the model can no longer be
+     * seen in is handled where every other unreachable placement is, by {@link
+     * #openAt}, so a pack update that rules one out moves the card rather than
+     * discarding what you chose.</p>
+     */
+    public static EquipmentSlot placementByName(String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        for (EquipmentSlot each : EquipmentSlot.values()) {
+            if (each.getSerializedName().equals(name)) {
+                return each;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The placement the card opens at, snapped into the cycle it can reach.
+     *
+     * <p>Where the item belongs and what the model asks for are worked out
+     * separately from what the pack will draw, so the two can disagree: a model
+     * whose offhand transform reaches far enough to read as worn on the back,
+     * and is then zero-scaled, would open somewhere the control cannot return
+     * to. The cycle wins, since it is the one that can be seen.</p>
+     */
+    public static EquipmentSlot openAt(List<EquipmentSlot> order, EquipmentSlot wanted) {
+        return order.contains(wanted) ? wanted : order.get(0);
     }
 
     /**
@@ -464,13 +633,19 @@ public final class FigurePreview {
      * changes has no business being worked out sixty times a second.</p>
      */
     public void show(ItemStack stack) {
-        show(stack, false);
+        show(stack, null);
     }
 
-    /** As {@link #show(ItemStack)}, with what the model said about the offhand. */
-    public void show(ItemStack stack, boolean preferOffhand) {
+    /**
+     * As {@link #show(ItemStack)}, into a placement the card has settled.
+     *
+     * @param where the placement, or null to open where the item belongs
+     */
+    public void show(ItemStack stack, EquipmentSlot where) {
         this.shown = stack == null ? ItemStack.EMPTY : stack;
-        this.slot = slotFor(this.shown, preferOffhand);
+        // Through the filter either way: a placement from the card is still
+        // only ever a slot a player has got.
+        this.slot = where == null ? slotFor(this.shown) : slotFor(where);
         this.act = actFor(this.shown, this.slot);
         this.useDuration = 0;
         this.chargeTicks = 25;

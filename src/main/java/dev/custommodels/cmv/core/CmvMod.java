@@ -4,6 +4,7 @@ import dev.custommodels.cmv.command.ModCommands;
 import dev.custommodels.cmv.compat.McCompat;
 import dev.custommodels.cmv.explorer.scan.ExplorerIndex;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.server.packs.PackType;
@@ -67,6 +68,12 @@ public final class CmvMod implements ClientModInitializer {
             // explorer was still holding, in case a screen was closed oddly.
             ExplorerIndex.get().onResourceReload();
         });
+
+        // A card taken off the screen writes on its own; this is for a
+        // placement changed and then left there while the game was shut down,
+        // which the client does not always route through a screen closing.
+        ClientLifecycleEvents.CLIENT_STOPPING.register(
+                client -> FigurePlacements.close());
 
         LOGGER.info("Custom Model Catalogue ready");
     }
