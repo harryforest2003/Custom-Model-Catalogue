@@ -21,7 +21,7 @@ import java.util.Set;
  * the explorer index's finished list: it regroups those models by the model
  * they point at, works out which items each is associated with, and stops.
  * Building it for a pack of fifty thousand models is a few map operations, so
- * opening the Wrap Bank costs nothing beyond what the explorer already paid.</p>
+ * opening the catalogue costs nothing beyond what the explorer already paid.</p>
  *
  * <h2>Compatibility</h2>
  *
@@ -634,7 +634,7 @@ public final class WrapCatalogue {
     }
 
     /**
-     * The orders the Wrap Bank offers.
+     * The orders the catalogue offers.
      *
      * <p>Set membership is inferred and, on a pack that files its models by
      * event and contributor rather than by collection, inferred badly. Sorting

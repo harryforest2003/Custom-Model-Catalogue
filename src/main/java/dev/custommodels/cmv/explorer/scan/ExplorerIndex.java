@@ -92,7 +92,7 @@ public final class ExplorerIndex {
     /**
      * Every model, one entry per item definition that reaches it.
      *
-     * <p>This is what the wrap bank wants: it has to see all the routes to a
+     * <p>This is what the catalogue wants: it has to see all the routes to a
      * model to work out whether it is applied by {@code custom_model_data} on a
      * particular item or by pointing {@code item_model} at a definition.</p>
      */
@@ -116,7 +116,7 @@ public final class ExplorerIndex {
     /**
      * The wrap catalogue for the current scan, built once and shared.
      *
-     * <p>Both the wrap bank and the detail view need it — the detail view to
+     * <p>Both the catalogue and the detail view need it — the detail view to
      * answer "what would applying this model actually do" — and building it
      * twice for the same scan is pure duplication. Rebuilt only when the scan
      * changes, which is what keeps opening a screen free.</p>
@@ -366,7 +366,7 @@ public final class ExplorerIndex {
      * <p>Queries the collapsed list, not the full one. Querying the full one
      * put the same skin on screen once per item definition that reaches it —
      * an Azure Greatsword card for the diamond sword and another for the
-     * netherite sword, which is the same picture twice. The wrap bank still
+     * netherite sword, which is the same picture twice. The catalogue still
      * gets {@link #models()}, because it needs every route to decide how a skin
      * is applied and to which items.</p>
      */

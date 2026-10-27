@@ -596,7 +596,7 @@ public final class ExplorerTest {
         many.addAll(parse("p:not_an_item", points.formatted(3)));
         List<LogicalModel> routes = newBuilder(shared, true).build(many);
         List<LogicalModel> distinct = GraphBuilder.collapseToDistinctModels(routes);
-        check("every route to a model is kept for the wrap bank",
+        check("every route to a model is kept for the catalogue",
                 routes.stream().filter(m -> m.defaultState().modelId().equals("p:item/gem"))
                         .count() == 3);
         check("the browse list holds one entry per model",
@@ -883,7 +883,7 @@ public final class ExplorerTest {
         boolean overflows = false;
         boolean tooTall = false;
         for (int rows = 1; rows <= 9; rows++) {
-            dev.custommodels.cmv.wrap.WrapBankScreen.MenuLayout layout = dev.custommodels.cmv.wrap.WrapBankScreen.menuLayout(rows, true);
+            dev.custommodels.cmv.wrap.CatalogueScreen.MenuLayout layout = dev.custommodels.cmv.wrap.CatalogueScreen.menuLayout(rows, true);
             int lastRowBottom = headerHeight + rows * rowHeight;
             if (layout.createY() < lastRowBottom) {
                 overlaps = true;
@@ -901,15 +901,15 @@ public final class ExplorerTest {
         check("and never hangs out of the box", !overflows);
         check("and is not floated off on its own", !tooTall);
 
-        dev.custommodels.cmv.wrap.WrapBankScreen.MenuLayout none = dev.custommodels.cmv.wrap.WrapBankScreen.menuLayout(4, false);
+        dev.custommodels.cmv.wrap.CatalogueScreen.MenuLayout none = dev.custommodels.cmv.wrap.CatalogueScreen.menuLayout(4, false);
         check("a menu with nothing to create is shorter for it",
-                none.height() < dev.custommodels.cmv.wrap.WrapBankScreen.menuLayout(4, true).height());
+                none.height() < dev.custommodels.cmv.wrap.CatalogueScreen.menuLayout(4, true).height());
         check("and still holds its rows",
                 none.height() >= headerHeight + 4 * rowHeight);
     }
 
     private static void wrapTests() {
-        header("Wrap Bank");
+        header("Catalogue");
 
         MemorySource source = new MemorySource();
         source.model("p:item/weapons/void_blade",

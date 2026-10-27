@@ -167,7 +167,7 @@ public final class CmvConfig {
         /**
          * Preview and name.
          *
-         * <p>Sized so that on a 1080p screen at GUI scale 3 the Wrap Bank fits
+         * <p>Sized so that on a 1080p screen at GUI scale 3 the catalogue fits
          * three rows of cards above the hotbar, or two above the full
          * inventory — which is the pair of layouts the interface offers.</p>
          */

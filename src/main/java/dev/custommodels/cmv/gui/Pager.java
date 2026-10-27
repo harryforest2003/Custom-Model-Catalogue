@@ -4,7 +4,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
- * The page control shared by the explorer and the wrap bank.
+ * The page control shared by the explorer and the catalogue.
  *
  * <p>Laid out and drawn in one call, which also records where the buttons
  * ended up so a click can be tested against them afterwards. Doing it in two

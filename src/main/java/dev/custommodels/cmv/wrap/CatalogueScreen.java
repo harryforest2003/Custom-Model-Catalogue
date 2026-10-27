@@ -29,8 +29,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The Wrap Bank: put an appearance from the loaded resource packs onto an item
- * you already own.
+ * The Catalogue: every appearance the loaded resource packs hold, in one grid.
  *
  * <h2>Why there is no slot to put items into</h2>
  *
@@ -38,10 +37,12 @@ import java.util.Locale;
  * is also the design that loses items: a slot means a stack held by the
  * interface rather than the inventory, and every way the interface can end —
  * closing, dying, disconnecting, a full inventory on the way back — is a way
- * for that stack to go missing. So the Wrap Bank never takes possession of
- * anything. The player's own inventory is drawn along the bottom, clicking a
- * slot <em>selects</em> it, and the wrap is written in place. There is no
- * moment at which an item is anywhere other than where the player left it.</p>
+ * for that stack to go missing. So this screen never takes possession of
+ * anything. The player's own inventory is drawn along the bottom and clicking
+ * a slot <em>selects</em> it, which narrows the grid to what would fit that
+ * item. There is no moment at which an item is anywhere other than where the
+ * player left it — and nothing is written to one either, this mod being a
+ * catalogue and not an editor.</p>
  *
  * <h2>Performance</h2>
  *
@@ -49,7 +50,7 @@ import java.util.Locale;
  * the explorer already produced, and shares the same preview service, so the
  * cards here reuse thumbnails the explorer may already have rendered.</p>
  */
-public final class WrapBankScreen extends Screen {
+public final class CatalogueScreen extends Screen {
 
     private static final int SIDEBAR_W = 132;
 
@@ -160,7 +161,7 @@ public final class WrapBankScreen extends Screen {
          * whose whole job was handing you a base item, was a thin slice of what
          * the explorer already did. One grid, three things to do with it.</p>
          */
-        BANK("Wrap Bank", "Every model the packs hold"),
+        CATALOGUE("Catalogue", "Every model the packs hold"),
         /**
          * The player's own lists.
          *
@@ -337,9 +338,9 @@ public final class WrapBankScreen extends Screen {
     private boolean oneItem;
 
     /** Opens straight onto the model index, for the commands and a search. */
-    public static WrapBankScreen browsing(String search) {
-        WrapBankScreen screen = new WrapBankScreen();
-        screen.tab = Tab.BANK;
+    public static CatalogueScreen browsing(String search) {
+        CatalogueScreen screen = new CatalogueScreen();
+        screen.tab = Tab.CATALOGUE;
         screen.pendingSearch = search;
         return screen;
     }
@@ -352,14 +353,14 @@ public final class WrapBankScreen extends Screen {
      * item, but the key was just pressed. So it lands on the page that says
      * what the mod does rather than on a grid of fifty thousand models.</p>
      */
-    public static WrapBankScreen home() {
-        WrapBankScreen screen = new WrapBankScreen();
+    public static CatalogueScreen home() {
+        CatalogueScreen screen = new CatalogueScreen();
         screen.tab = Tab.HOME;
         return screen;
     }
 
-    public WrapBankScreen() {
-        super(Component.literal("Wrap Bank"));
+    public CatalogueScreen() {
+        super(Component.literal("Catalogue"));
     }
 
     /**

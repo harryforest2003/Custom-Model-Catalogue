@@ -3,7 +3,7 @@ package dev.custommodels.cmv.command;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.custommodels.cmv.compat.McCompat;
 import dev.custommodels.cmv.core.CmvConfig;
-import dev.custommodels.cmv.wrap.WrapBankScreen;
+import dev.custommodels.cmv.wrap.CatalogueScreen;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -190,12 +190,12 @@ public final class ModCommands {
 
 
     private static int openExplorer(String search) {
-        McCompat.setScreen(WrapBankScreen.browsing(search));
+        McCompat.setScreen(CatalogueScreen.browsing(search));
         return 1;
     }
 
     private static int openCatalogue() {
-        McCompat.setScreen(new WrapBankScreen());
+        McCompat.setScreen(new CatalogueScreen());
         return 1;
     }
 

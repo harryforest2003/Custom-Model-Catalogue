@@ -2,7 +2,7 @@ package dev.custommodels.cmv.core;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.custommodels.cmv.compat.McCompat;
-import dev.custommodels.cmv.wrap.WrapBankScreen;
+import dev.custommodels.cmv.wrap.CatalogueScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
@@ -53,12 +53,16 @@ public final class Keybinds {
     }
 
     public static void register() {
-        // Translation key derived from this is "key.category.cmv.main".
+        // Translation key derived from this is
+        // "key.category.<MOD_ID>.main", which the lang file has to match: when
+        // the mod was given its own namespace this key moved with it, and the
+        // category showed up in Options as the raw key until the lang file
+        // caught up.
         category = KeyMapping.Category.register(
                 Identifier.fromNamespaceAndPath(CmvMod.MOD_ID, "main"));
 
-        // One key, because there is now one screen. The explorer and the wrap
-        // bank used to be separate and had a key each; merging them into tabs
+        // One key, because there is now one screen. The explorer and the
+        // catalogue used to be separate and had a key each; merging them into tabs
         // left two bindings opening the same window on different tabs, which is
         // a keybind to learn for something a click already does. M is kept
         // because it is the one already in people's hands.
@@ -75,9 +79,9 @@ public final class Keybinds {
             while (openScreen.consumeClick()) {
                 // Opens on the home page: the key carries no intent with it, so
                 // it lands on the page that explains what the mod is for and
-                // reports whether the packs read cleanly. The Wrap Bank is one
+                // reports whether the packs read cleanly. The catalogue is one
                 // click away along the top.
-                McCompat.setScreen(WrapBankScreen.home());
+                McCompat.setScreen(CatalogueScreen.home());
             }
         });
     }
