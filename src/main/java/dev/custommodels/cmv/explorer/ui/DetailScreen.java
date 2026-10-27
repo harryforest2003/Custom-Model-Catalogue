@@ -47,6 +47,13 @@ public final class DetailScreen extends Screen {
     private float pitch = -8.0F;
     private float zoom = 1.0F;
     private boolean autoRotate = CmvConfig.get().autoRotateDetail;
+    /** When the view last stopped turning, for the settle before it sharpens. */
+    private long stillSince;
+    /** The size the render being shown was drawn at, reported below it. */
+    private int shownPixels;
+    /** The size being worked towards, and whether that work is still going. */
+    private int sharpTarget;
+    private boolean sharpening;
     /** Plays the model's frames, until the player picks a state themselves. */
     private boolean cycleStates = CmvConfig.get().cycleDetailStates;
     private float sinceStateChange;
@@ -135,6 +142,36 @@ public final class DetailScreen extends Screen {
         drawStatus(graphics);
     }
 
+    /**
+     * How long the view must sit still before it is rendered at full size.
+     *
+     * <p>Long enough that nudging it round by hand does not ask for a large
+     * render on every pause between drags, short enough that stopping to look
+     * at something feels like it sharpens straight away.</p>
+     */
+    public static final long SETTLE_MILLIS = 220L;
+
+    /**
+     * Whether the view still counts as moving, and so keeps the cheap render.
+     *
+     * <p>Static and taking its three inputs, so the sequence can be walked:
+     * turning is cheap, dragging is cheap, and letting go stays cheap for the
+     * settle before the sharp render is asked for. That last part is what
+     * makes changing the angle of a paused view free — nudging it round asks
+     * for nothing large on every pause between drags, and the sharp render is
+     * only ever asked for once, at the angle you actually left it at.</p>
+     *
+     * @param sinceMotion milliseconds since the view last turned or was dragged
+     */
+    public static boolean moving(boolean dragging, boolean spinning, long sinceMotion) {
+        return dragging || spinning || sinceMotion < SETTLE_MILLIS;
+    }
+
+    /** Whether the view is turning, being dragged, or has only just stopped. */
+    private boolean moving() {
+        return moving(dragging, autoRotate, System.currentTimeMillis() - stillSince);
+    }
+
     /** How long each frame is held when the model's states are played. */
     private static final float SECONDS_PER_STATE = 2.0F;
 
@@ -161,6 +198,9 @@ public final class DetailScreen extends Screen {
             // A full turn every twenty seconds: slow enough to study, fast
             // enough not to feel stuck.
             yaw = (yaw + seconds * 18.0F) % 360.0F;
+        }
+        if (dragging || autoRotate) {
+            stillSince = System.currentTimeMillis();
         }
         advanceState(seconds);
         advanceFade(seconds);
@@ -495,7 +535,40 @@ public final class DetailScreen extends Screen {
         int centreX = (left + right) / 2;
         int centreY = (top + bottom) / 2;
 
-        int renderSize = McCompat.previewPixels(box, CmvConfig.get().maxDetailPixels());
+        // Small while it turns, the size it is actually displayed at once it
+        // stops. A spin asks for a fresh render every three degrees; standing
+        // still asks for one and then nothing.
+        CmvConfig config = CmvConfig.get();
+        int frames = index.previews().animationSteps(model, stateIndex);
+        int guiScale = McCompat.guiScale();
+        int smallSize = PreviewService.detailPixels(box, guiScale, true, frames,
+                config.maxDetailPixels(), config.maxStillPixels(),
+                PreviewService.cycleBudget());
+        int sharpSize = PreviewService.detailPixels(box, guiScale, false, frames,
+                config.maxDetailPixels(), config.maxStillPixels(),
+                PreviewService.cycleBudget());
+        // The small render is what is shown until the sharp one is completely
+        // ready for this exact angle — every frame of it, for a model whose
+        // textures animate. Swapping the moment the first frame landed would
+        // drop the view to "Rendering..." on the pause (nothing has been drawn
+        // at the new size yet, and the fallback is kept per size) and would
+        // then flicker between sharp and soft for a whole cycle. So the sharp
+        // one is asked for and quietly accumulates, and the picture changes
+        // once, when it is all there.
+        int renderSize = smallSize;
+        sharpening = false;
+        if (!moving() && sharpSize > smallSize) {
+            index.previews().detail(model, stateIndex, sharpSize,
+                    yaw, pitch, zoom, textureTick);
+            if (index.previews().cycleReady(model, stateIndex, sharpSize,
+                    yaw, pitch, zoom)) {
+                renderSize = sharpSize;
+            } else {
+                sharpening = true;
+            }
+        }
+        shownPixels = renderSize;
+        sharpTarget = sharpSize;
         Identifier texture = index.previews()
                 .detail(model, stateIndex, renderSize, yaw, pitch, zoom, textureTick);
         // The frame being left behind, at whatever angle it was last drawn at.
@@ -533,7 +606,8 @@ public final class DetailScreen extends Screen {
                     false);
         }
 
-        String angle = String.format("yaw %.0f   pitch %.0f   zoom %.2fx", yaw, pitch, zoom);
+        String angle = String.format("yaw %.0f   pitch %.0f   zoom %.2fx", yaw, pitch, zoom)
+                + "   " + shownPixels + "px" + (sharpening ? " \u2192 " + sharpTarget : "");
         GuiTheme.text(graphics, this.font, angle, left + 6, bottom - 12,
                 GuiTheme.TEXT_MUTED, false);
 

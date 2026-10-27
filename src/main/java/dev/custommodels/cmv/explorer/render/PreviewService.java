@@ -117,6 +117,20 @@ public final class PreviewService {
     private static final long MAX_PIXEL_BYTES = budget(12, 32);
 
     /**
+     * Bytes one model's cached cycle of animation frames may fill.
+     *
+     * <p>Half the pixel cache, and taken from it rather than chosen, which is
+     * the only way this number can be right. A cycle has to be resident <em>all
+     * at once</em> to replay for nothing; one that does not fit evicts its own
+     * earlier frames and re-renders them next time round, which is the
+     * thrashing this cache's floor exists to avoid. Half, not all, so a cycle
+     * cannot push out the grid thumbnails and the meshes alongside it.</p>
+     */
+    public static long cycleBudget() {
+        return MAX_PIXEL_BYTES / 2;
+    }
+
+    /**
      * Cached mesh geometry allowed, in bytes. Textures are not counted here;
      * they live in the shared texture cache and are bounded separately.
      */
@@ -416,8 +430,18 @@ public final class PreviewService {
         float quantYaw = Math.round(yaw / 3.0F) * 3.0F;
         float quantPitch = Math.round(pitch / 3.0F) * 3.0F;
         float quantZoom = Math.round(zoom * 20.0F) / 20.0F;
-        int animTick = hasAnimatedTexture(model.states()
-                .get(Math.min(stateIndex, model.states().size() - 1)).resolved()) ? tick : 0;
+        ResolvedModel resolved = model.states()
+                .get(Math.min(stateIndex, model.states().size() - 1)).resolved();
+        // Reduced to where it is in the cycle, not how long the screen has
+        // been open. The rasterizer already loops: rowOffset takes the tick
+        // modulo the frame count, so tick 7 and tick 7 + a whole period draw
+        // the same image. The key did not know that, so every step of the
+        // clock was a miss and an animated model re-rendered for as long as it
+        // was on screen — forever, at a steady ten renders a second, for
+        // frames it had already drawn. Taken modulo the period, the first
+        // cycle renders and every cycle after it is free.
+        int period = animationPeriod(resolved);
+        int animTick = period > 1 ? Math.floorMod(tick, period) : 0;
 
         String key = detailKey(model, stateIndex, size, quantYaw, quantPitch, quantZoom,
                 animTick);
@@ -930,28 +954,152 @@ public final class PreviewService {
     }
 
     /**
-     * Whether any of a model's textures is a strip of frames.
+     * The longest cycle that will be cached whole.
      *
-     * <p>Answered from what has already been read rather than by opening
-     * anything: an animated texture declares itself in its {@code .mcmeta}
-     * sidecar, which is read with the bytes, so the answer is a map lookup per
-     * texture. Before the first read it is "no", which costs one extra render
-     * when the answer turns out to be yes.</p>
+     * <p>Two textures whose periods share no factor multiply out, and a pair
+     * of unlucky primes would ask for a cycle thousands of frames long that
+     * would never finish caching and would fill the budget trying. Past the
+     * cap the cycle is allowed to be imperfect, which costs a visible jump
+     * once every thirty seconds on a model nobody has yet shipped.</p>
      */
-    private boolean hasAnimatedTexture(ResolvedModel resolved) {
+    private static final int LONGEST_CYCLE = 600;
+
+    /**
+     * The tick count a model's textures repeat on, or 1 when none animates.
+     *
+     * <p>The least common multiple of each animated texture's own period, so a
+     * model wearing a four-frame texture and a six-frame one comes back round
+     * on twelve rather than appearing to drift.</p>
+     */
+    int animationPeriod(ResolvedModel resolved) {
+        int period = 1;
         for (String textureId : resolved.distinctTextures()) {
             if (textureId == null) {
                 continue;
             }
             ResourceSource.Image decoded = textureCache.get(textureId);
-            if (decoded != null && decoded.frames() > 1) {
-                return true;
+            if (decoded == null || decoded.frames() <= 1) {
+                continue;
             }
-            ResourceSource.TextureBytes raw = rawTextures.get(textureId);
-            if (raw != null && raw.frameHeight() != Integer.MAX_VALUE) {
-                return true;
+            period = lcm(period, decoded.frames() * Math.max(1, decoded.frameTime()));
+            if (period >= LONGEST_CYCLE) {
+                return LONGEST_CYCLE;
             }
         }
-        return false;
+        return evenPeriod(period);
+    }
+
+    /**
+     * A cycle length the detail view's clock can land on exactly.
+     *
+     * <p>That clock steps two ticks at a time. Against an odd period it lands
+     * on the odd residues one time round and the even ones the next, so the
+     * set of cached frames is never complete and a view waiting for the set
+     * would wait forever. Doubling is the only correction available, because
+     * the answer has to stay a multiple of the true period — a texture's frame
+     * is its tick modulo its frame count, so any multiple draws exactly the
+     * same images and only evenness changes.</p>
+     *
+     * <p>It may come out past {@link #LONGEST_CYCLE}, which is allowed: a
+     * longer cycle means more frames, and more frames shrink the size they are
+     * drawn at, so the memory is bounded by {@link #detailPixels} either
+     * way.</p>
+     */
+    public static int evenPeriod(int period) {
+        return period > 1 && period % 2 != 0 ? period * 2 : period;
+    }
+
+    /**
+     * Whether every frame this model needs at this angle and size is drawn.
+     *
+     * <p>What the detail view waits for before it swaps a sharp render in for
+     * the small one it is already showing. Asking "is this one frame ready" is
+     * not enough for a model whose textures animate: its frames arrive one at
+     * a time, so the view would flicker between sharp and soft for a whole
+     * cycle. It waits for the set.</p>
+     */
+    public boolean cycleReady(LogicalModel model, int stateIndex, int size,
+                             float yaw, float pitch, float zoom) {
+        float quantYaw = Math.round(yaw / 3.0F) * 3.0F;
+        float quantPitch = Math.round(pitch / 3.0F) * 3.0F;
+        float quantZoom = Math.round(zoom * 20.0F) / 20.0F;
+        ResolvedModel resolved = model.states()
+                .get(Math.min(stateIndex, model.states().size() - 1)).resolved();
+        int period = animationPeriod(resolved);
+        if (period <= 1) {
+            return textures.containsKey(detailKey(model, stateIndex, size,
+                    quantYaw, quantPitch, quantZoom, 0));
+        }
+        for (int tick = 0; tick < period; tick += 2) {
+            if (!textures.containsKey(detailKey(model, stateIndex, size,
+                    quantYaw, quantPitch, quantZoom, tick))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int lcm(int a, int b) {
+        long gcd = Math.min(a, b);
+        long other = Math.max(a, b);
+        while (gcd != 0) {
+            long rest = other % gcd;
+            other = gcd;
+            gcd = rest;
+        }
+        return (int) Math.min(LONGEST_CYCLE, (long) a / other * b);
+    }
+
+    /**
+     * How many distinct frames one full cycle of a model's textures will cache.
+     *
+     * <p>Not the period: the detail view's clock steps two ticks at a time, so
+     * a twenty-tick cycle produces ten distinct images and not twenty. The
+     * at-rest render size is chosen from this, so that a whole cycle fits in
+     * memory at the size it is drawn.</p>
+     */
+    public int animationSteps(LogicalModel model, int stateIndex) {
+        ResolvedModel resolved = model.states()
+                .get(Math.min(stateIndex, model.states().size() - 1)).resolved();
+        return Math.max(1, animationPeriod(resolved) / 2);
+    }
+
+    /**
+     * How large the detail view should be rendered.
+     *
+     * <p>Static and taking everything it needs, so a harness can walk it.</p>
+     *
+     * <p>A moving preview asks for a fresh render every three degrees, so it
+     * has to stay small. A still one asks for one render and then nothing, so
+     * it is rendered at the size it is displayed at and the detail in a
+     * detailed model is finally visible. A still one whose textures animate
+     * asks for a whole cycle instead of one frame, so its size comes down
+     * until that cycle fits the budget — which is what makes an animated model
+     * cost a single cycle of renders rather than renders forever.</p>
+     *
+     * @param box       the square it is drawn into, in GUI pixels
+     * @param guiScale  physical pixels per GUI pixel
+     * @param moving    true while turning, dragging or settling
+     * @param frames    distinct frames one cycle caches; 1 when nothing animates
+     * @param movingCap the most a moving preview may be
+     * @param stillCap  the most a still one may be
+     * @param budget    bytes one model's cached cycle may fill; see
+     *                  {@link #cycleBudget()}
+     */
+    public static int detailPixels(int box, int guiScale, boolean moving, int frames,
+                                   int movingCap, int stillCap, long budget) {
+        int want = Math.max(1, box) * Math.max(1, guiScale);
+        int cap = movingCap;
+        if (!moving) {
+            cap = stillCap;
+            if (frames > 1) {
+                int fits = (int) Math.sqrt(budget / (4.0 * frames));
+                // Never below what it was while moving: sharpening into
+                // something blurrier than the spin would be worse than not
+                // sharpening at all.
+                cap = Math.max(movingCap, Math.min(cap, fits));
+            }
+        }
+        return Math.max(16, Math.min(cap, want));
     }
 }

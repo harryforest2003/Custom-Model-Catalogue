@@ -88,6 +88,26 @@ public final class CmvConfig {
      */
     public int maxDetailPixels = 288;
 
+    /**
+     * The detail view's render size once the view stops moving.
+     *
+     * <p>{@link #maxDetailPixels} is what a <em>moving</em> preview is allowed,
+     * and it has to be small because a spin asks for a fresh render every three
+     * degrees. Standing still asks for one render and then nothing, so it can
+     * afford to be rendered at the size it is actually displayed at — which is
+     * the whole difference between a detailed model looking detailed and
+     * looking like porridge. At a GUI scale of four the old cap was being blown
+     * up about four times.</p>
+     *
+     * <p>1280 rather than "no limit". The limit is not the render, which
+     * happens once on a worker; it is that the rasterizer keeps its scratch
+     * buffers per thread and grows them to the largest frame that thread has
+     * ever drawn. At 2048 that is about forty megabytes a worker, held for the
+     * rest of the session. 1280 covers a one-to-one render of the panel at any
+     * ordinary window and scale, and costs about fifteen.</p>
+     */
+    public int maxStillPixels = 1280;
+
     /** Automatically rotate the model in the detail view. */
     public boolean autoRotateDetail = true;
 
@@ -434,6 +454,13 @@ public final class CmvConfig {
 
     public int maxDetailPixels() {
         return Math.max(64, Math.min(1024, maxDetailPixels));
+    }
+
+    public int maxStillPixels() {
+        // Never below the moving cap: a view that sharpened into something
+        // blurrier than it was while turning would be worse than not
+        // sharpening at all.
+        return Math.max(maxDetailPixels(), Math.max(128, Math.min(2048, maxStillPixels)));
     }
 
     public PreviewQuality quality() {

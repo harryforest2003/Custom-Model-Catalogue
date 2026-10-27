@@ -266,6 +266,7 @@ def harnesses = [
         'DispatchNameTest',
         'ThemeTest',
         'HomeToolsTest',
+        'StillRenderTest',
 ]
 
 def harnessTasks = harnesses.collect { harness ->
