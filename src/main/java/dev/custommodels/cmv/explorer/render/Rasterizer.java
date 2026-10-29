@@ -90,8 +90,13 @@ public final class Rasterizer {
         }
 
         public View withSize(int newWidth, int newHeight, int newSupersample) {
+            // Carrying the tick, like withAngle and withTick. It did not, and
+            // resizing a view silently sent its animations back to frame one -
+            // the same mistake that made the animation export a slideshow of
+            // one texture frame, and the reason that one went unnoticed is
+            // that nothing calls this yet.
             return new View(newWidth, newHeight, newSupersample, yaw, pitch, zoom,
-                    displayTransform, frontLit, background);
+                    displayTransform, frontLit, background, tick);
         }
     }
 

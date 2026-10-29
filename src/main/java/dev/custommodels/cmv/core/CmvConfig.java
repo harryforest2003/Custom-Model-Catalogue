@@ -145,8 +145,31 @@ public final class CmvConfig {
      */
     public boolean animateDetailTextures = true;
 
-    /** Frames in an exported animation; also its smoothness. */
-    public int exportFrames = 48;
+    /**
+     * Frames in an exported animation, which is its smoothness and its size.
+     *
+     * <p>Smoothness only, now that the speed is set separately: the frames are
+     * spread over a full turn, so this is how many degrees each step is worth
+     * — 72 of them is five degrees apiece. It used to decide the speed as
+     * well, because the delay written into the file was fixed, so asking for a
+     * smoother animation produced a slower one and asking for a smaller file
+     * produced a blur.</p>
+     */
+    public int exportFrames = 72;
+
+    /**
+     * How long an exported animation takes to turn right round, in seconds.
+     *
+     * <p>Eight. The detail view itself turns once every twenty, which is the
+     * right speed to study something at and too slow for a file somebody is
+     * going to watch loop; the export used to take two, which is ten times the
+     * view's speed.</p>
+     *
+     * <p>Duration is free, unlike smoothness: a longer animation is the same
+     * number of frames held for longer, so the file is not one byte bigger.
+     * Only the frame count costs anything.</p>
+     */
+    public float exportSpinSeconds = 8.0F;
 
     /** Pixel size of exported images and animations. */
     public int exportSize = 256;

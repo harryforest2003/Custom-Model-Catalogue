@@ -786,6 +786,18 @@ public final class PreviewService {
      */
     public int[] renderExact(LogicalModel model, int stateIndex, int size,
                              float yaw, float pitch, float zoom, int background) {
+        return renderExact(model, stateIndex, size, yaw, pitch, zoom, background, 0);
+    }
+
+    /**
+     * As above, at one moment of the model's texture animations.
+     *
+     * @param tick which moment to draw, in game ticks; 0 is the first frame of
+     *             every animation, which is what a still wants
+     */
+    public int[] renderExact(LogicalModel model, int stateIndex, int size,
+                             float yaw, float pitch, float zoom, int background,
+                             int tick) {
         ResourceSource resources = source;
         if (resources == null) {
             return null;
@@ -797,8 +809,53 @@ public final class PreviewService {
             return null;
         }
         Rasterizer.View view = new Rasterizer.View(size, size, size >= 256 ? 2 : 3,
-                yaw, pitch, zoom, guiTransform(resolved), resolved.guiLightFront(), background);
+                yaw, pitch, zoom, guiTransform(resolved), resolved.guiLightFront(),
+                background, tick);
         return Rasterizer.render(mesh, view);
+    }
+
+    /**
+     * The tick count a model's textures repeat on, for a caller outside here.
+     *
+     * <p>So an export can be made to loop: an animation that stops part way
+     * through a flicker jumps when it starts again, and the length it has to
+     * be a whole number of is this.</p>
+     *
+     * @return 1 when nothing animates, which needs no accommodating
+     */
+    public int animationPeriod(LogicalModel model, int stateIndex) {
+        if (model == null || model.states().isEmpty()) {
+            return 1;
+        }
+        ModelState state = model.states().get(Math.min(stateIndex, model.states().size() - 1));
+        return animationPeriod(state.resolved());
+    }
+
+    /**
+     * The tick count several states' textures all repeat on, together.
+     *
+     * <p>For an export that walks a model's draw stages: each stage has its
+     * own textures and so its own cycle, and a length that is a whole number
+     * of every one of them is the only length on which all of them line up.
+     * Capped like the single-state answer, since the least common multiple of
+     * a few unrelated cycles grows quickly and a cap is better than a file
+     * nobody waits for.</p>
+     */
+    public int animationPeriod(LogicalModel model, java.util.List<Integer> stateIndices) {
+        if (stateIndices == null || stateIndices.isEmpty()) {
+            return 1;
+        }
+        int period = 1;
+        for (Integer index : stateIndices) {
+            if (index == null) {
+                continue;
+            }
+            period = lcm(period, animationPeriod(model, index));
+            if (period >= LONGEST_CYCLE) {
+                return LONGEST_CYCLE;
+            }
+        }
+        return period;
     }
 
     private ExecutorService pool() {

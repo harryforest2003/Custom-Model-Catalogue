@@ -940,6 +940,48 @@ public final class FigureTest {
                 compatible, null);
     }
 
+    // ----------------------------------------------- exported animation shims
+
+    private static int spinTicks(float seconds, int period) {
+        return dev.custommodels.cmv.explorer.ui.DetailScreen.spinTicks(seconds, period);
+    }
+
+    private static int delay(int ticks, int frames) {
+        return dev.custommodels.cmv.explorer.ui.DetailScreen.frameDelay(ticks, frames);
+    }
+
+    private static int[] ticksFor(int frames, int ticks) {
+        return dev.custommodels.cmv.explorer.ui.DetailScreen.exportTicks(frames, ticks);
+    }
+
+    private static int[] statesFor(int frames, java.util.List<Integer> stages, int fallback) {
+        return dev.custommodels.cmv.explorer.ui.DetailScreen
+                .exportStates(frames, stages, fallback);
+    }
+
+    private static boolean within(float value, float of, float by) {
+        return Math.abs(value - of) <= by;
+    }
+
+    private static int countOf(int[] values, int wanted) {
+        int found = 0;
+        for (int value : values) {
+            if (value == wanted) {
+                found++;
+            }
+        }
+        return found;
+    }
+
+    private static boolean allOf(int[] values, int wanted) {
+        for (int value : values) {
+            if (value != wanted) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // ------------------------------------- which way a back cosmetic is worn
 
     /** A transform that also says what it scales to, as the packs do. */
@@ -1024,6 +1066,240 @@ public final class FigureTest {
                 !head(at(0, -15.5F, 7.25F, 1.8F), true, null, false));
     }
 
+    /**
+     * The speed of an exported animation, and what used to decide it.
+     *
+     * <p>The delay written into the file was fixed at a twenty-fourth of a
+     * second, so the duration of a turn was the frame count divided by 24: the
+     * default 48 frames turned right round in two seconds, which is 180 degrees
+     * a second against the detail view's own 18. Ten times the speed of the
+     * thing it is a recording of. Worse, asking for a smoother animation
+     * bought a slower one and asking for a smaller file bought a blur, because
+     * one number was doing two jobs.</p>
+     *
+     * <p>Duration is set on its own now and the frame count only decides
+     * smoothness. The checks below are on the two numbers that decide it, so a
+     * change that made the export fast again would fail here.</p>
+     */
+    private static void howFastAnExportTurns() {
+        System.out.println();
+        System.out.println("how fast an exported turn goes");
+
+        // Nothing animating: the duration is exactly what was asked for.
+        says("eight seconds is a hundred and sixty ticks", spinTicks(8.0F, 1) == 160);
+        says("and a period of one changes nothing",
+                spinTicks(8.0F, 1) == spinTicks(8.0F, 0));
+
+        // The delay is in hundredths, and is what carries the duration now.
+        says("the default turn lasts about eight seconds",
+                within(delay(160, 72) * 72 / 100.0F, 8.0F, 0.2F));
+        says("and so does it at a different smoothness",
+                within(delay(160, 48) * 48 / 100.0F, 8.0F, 0.3F));
+        says("so the frame count no longer decides the speed",
+                Math.abs(delay(160, 72) * 72 - delay(160, 48) * 48) <= 30);
+
+        // The old behaviour, computed the way the file actually came out, so it
+        // cannot come back unnoticed. The old code passed a fixed 1000/24
+        // milliseconds, which is 41, and the encoder rounds that to hundredths:
+        // 4, so 40 milliseconds a frame and 1.92 seconds for the default 48.
+        // Worth computing rather than quoting - reading 41 off the source and
+        // calling it the answer is how 1.97 got written here first, and the
+        // file never said 1.97.
+        int wasHundredths = Math.max(2, Math.round((1000 / 24) / 10.0F));
+        float wasSeconds = wasHundredths * 48 / 100.0F;
+        says("the old fixed delay came out as four hundredths", wasHundredths == 4);
+        says("so 48 frames turned right round in 1.92 seconds",
+                within(wasSeconds, 1.92F, 0.005F));
+        says("which is 187 degrees a second, over ten times the view's own 18",
+                within(360.0F / wasSeconds, 187.5F, 0.5F)
+                        && 360.0F / wasSeconds > 18.0F * 10);
+        says("and the default is now four times slower than that",
+                delay(160, 48) * 48 / 100.0F > wasSeconds * 4);
+
+        // The delay this writes is in hundredths and the encoder is given
+        // milliseconds, so it is multiplied by ten and divided by ten again.
+        // An exact round trip, which is the point of choosing the coarser unit
+        // here: a delay of 41 milliseconds is not a thing a GIF can hold, and
+        // deciding the duration in a unit the file cannot express is how the
+        // duration ends up being something nobody chose.
+        says("the delay survives the trip through the encoder's units",
+                Math.max(2, Math.round(delay(160, 72) * 10 / 10.0F)) == delay(160, 72));
+
+        // A GIF delay of one or zero is read as a tenth of a second by most
+        // players, so a file asking to be fast plays far slower than it asked.
+        says("a delay is never written below two hundredths",
+                delay(1, 120) >= 2 && delay(0, 120) >= 2);
+        says("and never above what the format holds", delay(100000, 8) <= 255);
+
+        // Fitting the texture cycle so the file loops in both its motions.
+        says("a cycle that divides the duration is already whole",
+                spinTicks(8.0F, 20) == 160);
+        says("one that does not is rounded to the nearest whole cycle",
+                spinTicks(8.0F, 30) == 150);
+        says("rounded down where that is nearer, not always up",
+                spinTicks(8.0F, 70) == 140);
+        says("and never to nothing", spinTicks(0.5F, 7) > 0);
+
+        // But not at any price. A cycle far longer than the duration would
+        // make a thirty-second file to spare one jump, which is a worse answer
+        // than the jump - the same call the detail view's cycle cap makes.
+        says("a cycle too long to fit is not fitted",
+                spinTicks(8.0F, 600) == 160);
+        says("nor one that would more than double the duration",
+                spinTicks(8.0F, 400) == 160);
+        says("while one that merely stretches it is fitted",
+                spinTicks(8.0F, 120) == 120 || spinTicks(8.0F, 120) == 240);
+
+        // Somebody editing the config by hand cannot ask for nonsense.
+        says("a zero duration is still a duration", spinTicks(0.0F, 1) >= 1);
+        says("and an absurd one is capped", spinTicks(9000.0F, 1) <= 60 * 20);
+        says("a negative one too", spinTicks(-5.0F, 1) >= 1);
+    }
+
+    /**
+     * That the export's animations advance at all, which is the bug it had.
+     *
+     * <p>Every frame of an exported animation drew the first frame of every
+     * animated texture, because the view was built with the constructor that
+     * leaves the tick at zero. All the machinery was there and the detail view
+     * was using it; the export simply never asked. A check on the renderer
+     * would have passed throughout \u2014 the renderer was right \u2014 so what is
+     * asked here is what the export requests, frame by frame.</p>
+     */
+    private static void whatMomentEachFrameDraws() {
+        System.out.println();
+        System.out.println("which moment of its animations each exported frame draws");
+
+        int[] at = ticksFor(72, 160);
+        says("there is one moment per frame", at.length == 72);
+        says("the first frame is the start of every animation", at[0] == 0);
+
+        // The bug, stated as the thing it is: a tick that never moves on.
+        boolean moves = false;
+        for (int tick : at) {
+            if (tick != 0) {
+                moves = true;
+            }
+        }
+        says("and the rest of them are not all the start", moves);
+
+        boolean forwards = true;
+        for (int i = 1; i < at.length; i++) {
+            if (at[i] < at[i - 1]) {
+                forwards = false;
+            }
+        }
+        says("time only goes forwards", forwards);
+        says("and stops short of where it began, which comes round next",
+                at[at.length - 1] < 160);
+
+        // The detail view's own clock steps two ticks at a time, so an export
+        // that steps no further is showing the animation at the fidelity the
+        // card shows it at. Coarser than that and the export is a worse
+        // recording of the thing than the thing.
+        float step = 160 / 72.0F;
+        says("the default samples the animation as finely as the card does",
+                step <= 2.5F);
+        says("which the old two-second turn could not have done",
+                160 / 48.0F > step);
+
+        // Nothing in is survived rather than thrown: these numbers come from a
+        // config file somebody can edit.
+        says("one frame is a list of one", ticksFor(1, 160).length == 1);
+        says("no frames is still a list of one", ticksFor(0, 160).length == 1);
+        says("and no ticks is the start, every time",
+                ticksFor(8, 0)[7] == 0 && ticksFor(8, -5)[7] == 0);
+    }
+
+    /**
+     * That a view carries its moment through every way of deriving another.
+     *
+     * <p>{@code withSize} did not, so resizing a view sent its animations back
+     * to the beginning. Nothing calls it, which is why nobody noticed, and is
+     * also why it is worth a check rather than a fix alone: the next caller
+     * would have inherited the same bug the export had.</p>
+     */
+    private static void aViewKeepsItsMoment() {
+        System.out.println();
+        System.out.println("a view keeps the moment it is set to");
+        var view = new dev.custommodels.cmv.explorer.render.Rasterizer.View(
+                64, 64, 2, 30.0F, 10.0F, 1.0F,
+                dev.custommodels.cmv.explorer.res.ModelJson.Transform.IDENTITY,
+                false, 0, 37);
+        says("a view is built at the moment it is given", view.tick() == 37);
+        says("asked for another angle, it is still that moment",
+                view.withAngle(90.0F, 0.0F).tick() == 37);
+        says("asked for another size, it is still that moment",
+                view.withSize(128, 128, 2).tick() == 37);
+        says("and withTick is the one thing that changes it",
+                view.withTick(5).tick() == 5);
+        says("a still is built at the beginning of every animation",
+                new dev.custommodels.cmv.explorer.render.Rasterizer.View(
+                        64, 64, 2, 0, 0, 1.0F,
+                        dev.custommodels.cmv.explorer.res.ModelJson.Transform.IDENTITY,
+                        false, 0).tick() == 0);
+    }
+
+    /**
+     * A bow drawing itself over one turn of an exported animation.
+     *
+     * <p>The stages arrive already in the order the game passes through them,
+     * at rest first \u2014 that is what {@code LogicalModel.animationFrames} is
+     * for, and it is taken from each state's own threshold rather than from its
+     * name. What is settled here is only how they are spread: one pass over one
+     * spin, so the frame after the last is the first again and the file loops
+     * on a bow at rest rather than a bow half drawn.</p>
+     */
+    private static void aBowDrawingOverOneTurn() {
+        System.out.println();
+        System.out.println("a bow's draw stages across an exported turn");
+
+        // Three stages, as a vanilla bow has: at rest, part drawn, fully drawn.
+        java.util.List<Integer> bow = java.util.List.of(0, 4, 7);
+        int[] at = statesFor(72, bow, 0);
+        says("there is a stage for every frame", at.length == 72);
+        says("the first frame is the item at rest", at[0] == bow.get(0));
+        says("the last frame is the item fully drawn",
+                at[at.length - 1] == bow.get(bow.size() - 1));
+        says("so the loop goes from fully drawn back to at rest",
+                at[at.length - 1] != at[0]);
+
+        // Every stage is actually shown, and in order - a spread that skipped
+        // the middle of a draw would still pass the two checks above.
+        java.util.List<Integer> seen = new java.util.ArrayList<>();
+        for (int state : at) {
+            if (seen.isEmpty() || seen.get(seen.size() - 1) != state) {
+                seen.add(state);
+            }
+        }
+        says("every stage is shown", seen.size() == bow.size());
+        says("each exactly once, never going back and forth", seen.equals(bow));
+        says("and each for the same share of the turn",
+                countOf(at, bow.get(0)) == 24 && countOf(at, bow.get(2)) == 24);
+
+        // A model whose states are parts drawn together is not stepped through:
+        // that would take it apart rather than animate it. animationFrames
+        // returns nothing for those, and nothing is what this has to cope with.
+        says("nothing to step through holds the state the card is showing",
+                allOf(statesFor(72, java.util.List.of(), 3), 3));
+        says("and so does a single state, which is not a sequence",
+                allOf(statesFor(72, java.util.List.of(5), 3), 3));
+        says("and so does none at all", allOf(statesFor(72, null, 3), 3));
+
+        // More stages than frames must not read off the end of the list.
+        int[] crowded = statesFor(4, java.util.List.of(0, 1, 2, 3, 4, 5, 6, 7), 0);
+        says("more stages than frames is survived", crowded.length == 4);
+        boolean inRange = true;
+        for (int state : crowded) {
+            if (state < 0 || state > 7) {
+                inRange = false;
+            }
+        }
+        says("and every frame still names a real stage", inRange);
+        says("one frame shows the first stage",
+                statesFor(1, bow, 0)[0] == bow.get(0));
+    }
+
     public static void main(String[] args) {
 
         theBow();
@@ -1038,6 +1314,10 @@ public final class FigureTest {
         notWritingForNothing();
         somethingToPutItOn();
         whichWayItIsWorn();
+        howFastAnExportTurns();
+        whatMomentEachFrameDraws();
+        aViewKeepsItsMoment();
+        aBowDrawingOverOneTurn();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");

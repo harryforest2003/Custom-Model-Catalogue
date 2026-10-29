@@ -2007,6 +2007,40 @@ public final class ExplorerTest {
         check("the animation loops back to the first frame",
                 wrapped == centre);
 
+        // And the whole chain the export actually walks: the ticks it decides
+        // on, fed to the renderer, one frame of the file per tick. Both halves
+        // were already right on their own - the renderer plays animations and
+        // the detail view uses it - and the export still produced a file in
+        // which nothing moved, because it asked for tick zero every time. So
+        // what is asked here is what a person watching the file would see.
+        int exportFrames = 72;
+        int[] exportTicks = dev.custommodels.cmv.explorer.ui.DetailScreen
+                .exportTicks(exportFrames, dev.custommodels.cmv.explorer.ui.DetailScreen
+                        .spinTicks(8.0F, 16));
+        java.util.Set<Integer> coloursDrawn = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < exportFrames; i++) {
+            // Straight on, so the rotation cannot be what changes the pixel.
+            coloursDrawn.add(Rasterizer.render(animated, new Rasterizer.View(
+                    32, 32, 1, 0, 0, 1.0F, ModelJson.Transform.IDENTITY, true, 0,
+                    exportTicks[i]))[16 * 32 + 16]);
+        }
+        check("an exported animation draws more than one texture frame",
+                coloursDrawn.size() > 1);
+        check("and draws both of the ones this strip has",
+                coloursDrawn.size() == 2);
+
+        // The same chain with the bug put back, so the check above is known to
+        // be the thing that notices rather than something that would pass
+        // either way.
+        java.util.Set<Integer> atTickZero = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < exportFrames; i++) {
+            atTickZero.add(Rasterizer.render(animated, new Rasterizer.View(
+                    32, 32, 1, 0, 0, 1.0F, ModelJson.Transform.IDENTITY, true, 0, 0))
+                    [16 * 32 + 16]);
+        }
+        check("where asking for tick zero every frame draws only one",
+                atTickZero.size() == 1);
+
         // A frame time holds each frame for that many ticks.
         source.animatedTexture("p:slow", 16, 4, 0xFF00FF00, 0xFFFF0000, 4);
         source.model("p:block/slow", """

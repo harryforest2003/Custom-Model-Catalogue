@@ -1335,14 +1335,32 @@ public final class DetailScreen extends Screen {
         AtomicInteger counter = new AtomicInteger();
         export = new ExportProgress(counter, frames, "Generating animated preview");
 
-        index.previews().prepareTextures(model, stateIndex);
+        // The draw stages, if this is a model that has any: a bow goes from
+        // at rest to fully drawn over one turn and starts again, which is the
+        // same sequence and the same order the card plays when it cycles.
+        List<Integer> stages = config.cycleDetailStates
+                ? model.animationFrames() : List.of();
+        int[] stateAt = exportStates(frames, stages, stateIndex);
+
+        // Textures for every stage the export will draw, not just the one the
+        // card is showing, and before the length is worked out: the length
+        // depends on what those textures do and nothing knows that until they
+        // are decoded. On the client thread, because reading a pack is.
+        for (int state : distinct(stateAt)) {
+            index.previews().prepareTextures(model, state);
+        }
+        int period = config.animateDetailTextures
+                ? index.previews().animationPeriod(model, distinct(stateAt)) : 1;
+        int ticks = spinTicks(config.exportSpinSeconds, period);
+        int delay = frameDelay(ticks, frames);
+        int[] tickAt = exportTicks(frames, ticks);
         runOffThread(() -> {
             try {
                 List<int[]> rendered = new ArrayList<>(frames);
                 for (int i = 0; i < frames; i++) {
                     int[] pixels = index.previews().renderExact(
-                            model, stateIndex, size, i * 360.0F / frames,
-                            exportPitch, exportZoom, 0);
+                            model, stateAt[i], size, i * 360.0F / frames,
+                            exportPitch, exportZoom, 0, tickAt[i]);
                     if (pixels == null) {
                         post(() -> showStatus("Nothing to render for this model"));
                         return;
@@ -1351,13 +1369,113 @@ public final class DetailScreen extends Screen {
                     counter.set(i + 1);
                 }
                 ImageExport.Outcome outcome = ImageExport.exportAnimation(
-                        rendered, size, size, 1000 / 24, GuiTheme.DARK_BG,
+                        rendered, size, size, delay * 10, GuiTheme.DARK_BG,
                         model.displayName());
                 post(() -> showStatus(outcome.message()));
             } finally {
                 export = null;
             }
         });
+    }
+
+    /**
+     * How many game ticks one turn of an exported animation lasts.
+     *
+     * <p>The asked-for duration in ticks, rounded to a whole number of the
+     * model's texture cycle so the file loops in both of its motions at once.
+     * A rotation always loops — it is a full turn — but an animation cut off
+     * part way through a flicker jumps every time the file starts again, and
+     * that jump is the one thing a looping file cannot hide.</p>
+     *
+     * <p>Rounded to the nearest whole cycle rather than up, so a cycle a
+     * little longer than the duration shortens it instead of doubling it. And
+     * a cycle so long that fitting it would more than double what was asked
+     * for is not fitted at all: a thirty-second file to spare one jump at the
+     * loop is a worse answer than the jump, which is the same judgement the
+     * detail view's own cycle cap makes. Twenty ticks a second is the game's
+     * rate, and what the texture frame times are written in.</p>
+     */
+    public static int spinTicks(float seconds, int period) {
+        int wanted = Math.max(1, Math.round(Math.max(0.5F, Math.min(60.0F, seconds)) * 20.0F));
+        if (period <= 1) {
+            return wanted;
+        }
+        int whole = Math.round(wanted / (float) period) * period;
+        return whole <= 0 || whole > wanted * 2 ? wanted : whole;
+    }
+
+    /**
+     * Which moment of the model's animations each frame of an export draws.
+     *
+     * <p>Worked out as a list rather than inline in the loop so that it can be
+     * asked whether it advances at all. The animation showing nothing but its
+     * first frame is exactly what was wrong here, and the shape of that bug is
+     * a tick that is never moved on — which a check on the renderer cannot see
+     * and a check on this cannot miss.</p>
+     *
+     * <p>Spread over the turn so the last frame stops short of the first: the
+     * frame after the last one is frame zero again, and landing on the same
+     * tick twice would hold the animation for two frames once a loop.</p>
+     */
+    public static int[] exportTicks(int frames, int ticks) {
+        int count = Math.max(1, frames);
+        int[] at = new int[count];
+        for (int i = 0; i < count; i++) {
+            at[i] = Math.round(i * Math.max(0, ticks) / (float) count);
+        }
+        return at;
+    }
+
+    /**
+     * Which of a model's draw stages each frame of an export shows.
+     *
+     * <p>A bow, a crossbow, a rod being cast: states reached instead of one
+     * another rather than drawn together, which {@link
+     * LogicalModel#animationFrames} separates and puts in the order the game
+     * would pass through them. Spread evenly over the turn, so one spin is one
+     * pass from at rest to fully drawn and the frame after the last is the
+     * first again.</p>
+     *
+     * <p>Every frame on the state the card is showing when there is nothing to
+     * step through, which is almost every model: the states of a composite are
+     * parts drawn together, and walking those would take the model to pieces
+     * rather than animate it.</p>
+     */
+    public static int[] exportStates(int frames, List<Integer> stages, int fallback) {
+        int count = Math.max(1, frames);
+        int[] at = new int[count];
+        if (stages == null || stages.size() < 2) {
+            java.util.Arrays.fill(at, fallback);
+            return at;
+        }
+        for (int i = 0; i < count; i++) {
+            at[i] = stages.get(Math.min(stages.size() - 1, i * stages.size() / count));
+        }
+        return at;
+    }
+
+    /** The distinct values of a list, in the order they first appear. */
+    private static List<Integer> distinct(int[] values) {
+        List<Integer> out = new ArrayList<>(4);
+        for (int value : values) {
+            if (!out.contains(value)) {
+                out.add(value);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The delay to write for each frame, in hundredths of a second.
+     *
+     * <p>Which is the only unit a GIF has. At least two, because a delay of
+     * one or zero is treated as a tenth of a second by most of what plays
+     * these — a file asking to run faster than that plays far slower than it
+     * asked, which is the opposite of what anyone wanted.</p>
+     */
+    public static int frameDelay(int ticks, int frames) {
+        int hundredths = Math.round(ticks * 5.0F / Math.max(1, frames));
+        return Math.max(2, Math.min(255, hundredths));
     }
 
     /** Runs export work on a short-lived daemon thread. */
