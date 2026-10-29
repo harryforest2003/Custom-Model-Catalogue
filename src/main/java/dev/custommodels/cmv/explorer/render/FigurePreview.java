@@ -253,6 +253,78 @@ public final class FigurePreview {
         return true;
     }
 
+    /**
+     * Whether a model the offhand inference claimed is really worn on the head.
+     *
+     * <p>Asked only of a model {@link #wantsOffhand} has already claimed, and
+     * it is a correction to that claim rather than an inference of its own. The
+     * reason it has to be asked at all is that there are two different ways a
+     * pack puts a pair of wings on somebody's back, and the offhand one is not
+     * the common one. ItemsAdder cosmetics are worn in the helmet slot: the
+     * geometry is positioned by the {@code head} transform, with a large
+     * negative Y to drop it from the scalp down to the shoulders and a scale to
+     * size it to a torso. Those models also carry a {@code
+     * thirdperson_lefthand} - every model in these packs carries every
+     * transform, because they are generated from one template - and it reaches
+     * far enough to look like a back. So the offhand test says yes, and what it
+     * draws is the wings at natural size tucked behind the head, which is the
+     * thing nobody would choose to look at.</p>
+     *
+     * <p>Two questions, either of which is enough, because the two kinds of
+     * pack express the same intent differently:</p>
+     *
+     * <ul>
+     *   <li>The head transform sends it further. A back reached from the scalp
+     *       is further than a back reached from a hand.</li>
+     *   <li>The head transform draws it larger. Wings sized to a torso are
+     *       scaled up; a thing being carried is not.</li>
+     * </ul>
+     *
+     * <p>Measured over the two packs this was developed against rather than
+     * reasoned about: of 398 models the offhand test claims in one and 278 in
+     * the other, this moves 379 and 189, and every name among them is wings, a
+     * backpack, a cape or a flag. The ones it leaves behind are right to be
+     * left - a pack with no {@code head} transform at all has said nothing to
+     * go on, and one that scales the head to zero has said the head draws
+     * nothing. The same test asked of every model rather than only of these
+     * would move 1,575 bows, chairs and fishing rods onto a head, which is why
+     * it is a correction to the offhand claim and not a rule of its own.</p>
+     */
+    public static boolean wantsHead(ModelJson.Transform head, boolean headDeclared,
+            ModelJson.Transform offhand, boolean offhandDeclared) {
+        if (!headDeclared || head == null || drawsNothing(head)) {
+            return false;
+        }
+        if (!offhandDeclared || offhand == null) {
+            // Nothing to be further or larger than. The offhand claim it is
+            // correcting cannot have been made without one, so this is only
+            // reached by somebody asking the question directly.
+            return false;
+        }
+        return furthest(head) > furthest(offhand) || biggest(head) > biggest(offhand);
+    }
+
+    /**
+     * The largest the geometry is scaled on any one axis, and one where a
+     * transform says nothing about scale.
+     *
+     * <p>One rather than zero because that is what the game does with an
+     * absent scale: it draws the model at its own size. A transform that
+     * mentions no scale and one that says {@code [1, 1, 1]} are the same
+     * instruction, so they have to compare the same.</p>
+     */
+    private static float biggest(ModelJson.Transform transform) {
+        float[] scale = transform.scale();
+        if (scale == null) {
+            return 1.0F;
+        }
+        float most = 0.0F;
+        for (float each : scale) {
+            most = Math.max(most, Math.abs(each));
+        }
+        return most;
+    }
+
     /** The furthest a transform moves the geometry on any one axis. */
     private static float furthest(ModelJson.Transform transform) {
         float[] moved = transform.translation();
@@ -303,14 +375,27 @@ public final class FigurePreview {
      * with it: a helmet opens on the head whatever its {@code
      * thirdperson_lefthand} says.</p>
      *
+     * <p>For anything else, a model that says it is worn rather than held
+     * gets to say where. Both answers come off its own transforms: {@link
+     * #wantsOffhand} for whether it is worn at all, and then {@link
+     * #wantsHead} for which of the two ways of wearing it on a back this pack
+     * used. The second only ever moves a model the first has already
+     * claimed.</p>
+     *
      * <p>This only settles where the card <em>opens</em>. Every placement is
-     * reachable from the control either way - see {@link #placements} — because
+     * reachable from the control either way - see {@link #placements} - because
      * neither answer can be trusted far enough to be the only one offered.</p>
      */
-    public static EquipmentSlot placeFor(ItemStack stack, boolean modelWantsOffhand) {
+    public static EquipmentSlot placeFor(ItemStack stack, boolean modelWantsOffhand,
+            boolean modelWantsHead) {
         EquipmentSlot worn = slotFor(stack);
-        return worn == EquipmentSlot.MAINHAND && modelWantsOffhand
-                ? EquipmentSlot.OFFHAND : worn;
+        if (worn != EquipmentSlot.MAINHAND || !modelWantsOffhand) {
+            return worn;
+        }
+        // Which of the two ways of wearing a thing on your back this pack
+        // meant. Only asked once the offhand claim is made, because on its own
+        // it would put every bow on a head: see wantsHead.
+        return modelWantsHead ? EquipmentSlot.HEAD : EquipmentSlot.OFFHAND;
     }
 
     /**

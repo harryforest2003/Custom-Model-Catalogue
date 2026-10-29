@@ -899,7 +899,7 @@ public final class DetailScreen extends Screen {
                 resolved.transform(THIRD_PERSON_LEFT),
                 resolved.transform(HEAD_CONTEXT));
         EquipmentSlot opening = placeChosen != null ? placeChosen
-                : FigurePreview.placeFor(stack, modelWantsOffhand());
+                : FigurePreview.placeFor(stack, modelWantsOffhand(), modelWantsHead());
         figure.show(stack, FigurePreview.openAt(placeOrder, opening));
         figureDressed = true;
     }
@@ -918,6 +918,23 @@ public final class DetailScreen extends Screen {
                 resolved.transforms().containsKey(THIRD_PERSON_LEFT),
                 resolved.transform(THIRD_PERSON_RIGHT),
                 resolved.transforms().containsKey(THIRD_PERSON_RIGHT));
+    }
+
+    /**
+     * Whether a model worn rather than held is worn on the head.
+     *
+     * <p>The other way a pack puts something on your back, and the common one
+     * in these packs: the helmet slot, positioned by the {@code head}
+     * transform — see {@link FigurePreview#wantsHead}. Only consulted for a
+     * model the offhand test has already claimed, so a bow stays a bow.</p>
+     */
+    private boolean modelWantsHead() {
+        ResolvedModel resolved = model.defaultState().resolved();
+        return FigurePreview.wantsHead(
+                resolved.transform(HEAD_CONTEXT),
+                resolved.transforms().containsKey(HEAD_CONTEXT),
+                resolved.transform(THIRD_PERSON_LEFT),
+                resolved.transforms().containsKey(THIRD_PERSON_LEFT));
     }
 
     // Display transform names, spelled as the pack files spell them.

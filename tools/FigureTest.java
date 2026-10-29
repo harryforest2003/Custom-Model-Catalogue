@@ -940,6 +940,90 @@ public final class FigureTest {
                 compatible, null);
     }
 
+    // ------------------------------------- which way a back cosmetic is worn
+
+    /** A transform that also says what it scales to, as the packs do. */
+    private static ModelJson.Transform at(float x, float y, float z, float scale) {
+        return new ModelJson.Transform(
+                new float[]{0, 0, 0}, new float[]{x, y, z},
+                new float[]{scale, scale, scale});
+    }
+
+    private static boolean head(ModelJson.Transform head, boolean headSaid,
+            ModelJson.Transform left, boolean leftSaid) {
+        return FigurePreview.wantsHead(head, headSaid, left, leftSaid);
+    }
+
+    /**
+     * The second of the two ways a pack puts something on your back.
+     *
+     * <p>Every transform below is copied out of the two packs here, not made
+     * up. The offhand test claims all four of these models; what separates
+     * them is what their {@code head} transform says, and between them they
+     * cover both reasons it can win and both reasons it cannot.</p>
+     */
+    private static void whichWayItIsWorn() {
+        System.out.println();
+        System.out.println("whether a back cosmetic is worn on the head");
+
+        // fantastic_wings_set_v1: the head sends it further AND scales it up.
+        // The shape the whole correction exists for.
+        says("wings the head sends further and larger are worn on the head",
+                head(at(0, -15.5F, 7.25F, 1.8F), true, at(-5.5F, -7, 9, 1), true));
+
+        // fairyset: the head does NOT send it as far - 9 against 12 - but
+        // draws it at 2.2 against 1.3. Scale alone has to be enough or this
+        // one stays in the offhand looking small, which is the complaint.
+        says("and so are wings the head only draws larger",
+                head(at(0, -9, 7.5F, 2.2F), true, at(-5.5F, -5.75F, 12, 1.3F), true));
+
+        // elitecreatures pirate_weapon_set_v2/wing: a head transform that
+        // reaches 20.25 against the hand's 16 - so the reach test says head -
+        // and is scaled to nothing, which is the pack saying the head draws
+        // nothing at all. Without the guard this pair sends a pair of wings to
+        // a placement where there is nothing to see. Six models in these two
+        // packs are this shape; 197 declare a zero-scaled head with a reach
+        // over six, so it is not a hypothetical.
+        says("a head scaled to nothing is the pack saying not there",
+                !head(at(0, -20.25F, -0.75F, 0), true, at(-6, -3.75F, 16, 0.9F), true));
+        // steampunk: the same instruction where the reach would not have won
+        // either, so this one is about the guard and not about the comparison.
+        says("even where the reach would not have chosen it",
+                !head(at(0, 0, 0, 0), true, at(-6, -5.35F, 10.75F, 2.02F), true));
+
+        // pixelmon_backpacks: no head transform in the file. Nothing to read,
+        // so the offhand claim stands rather than being overruled by a guess.
+        says("no head transform at all leaves the offhand claim alone",
+                !head(null, false, at(-6, -3.5F, 10, 1), true));
+        says("and neither does a head transform nobody declared",
+                !head(at(0, -15.5F, 7.25F, 1.8F), false, at(-5.5F, -7, 9, 1), true));
+
+        // A head that asks for less on both counts is not where this goes.
+        says("a nearer, smaller head does not win",
+                !head(at(0, -4, 0, 1), true, at(-5.5F, -7, 9, 1.3F), true));
+        says("and matching it exactly is not winning either",
+                !head(at(0, -9, 0, 1.5F), true, at(0, -9, 0, 1.5F), true));
+
+        // An absent scale means the model's own size, which is what a scale of
+        // one means. The two have to compare the same or a pack that mentions
+        // no scale would read as smaller than one that says [1, 1, 1] - and
+        // the wings that started all this mention none in the offhand. Asked
+        // at the same translation in both, so scale is the only difference
+        // left and the reach test cannot answer it instead.
+        var unscaled = new dev.custommodels.cmv.explorer.res.ModelJson.Transform(
+                new float[]{0, 0, 0}, new float[]{0, -5, 0}, null);
+        says("an unmentioned scale counts as one, not as nothing",
+                !head(at(0, -5, 0, 1), true, unscaled, true));
+        says("and a head larger than it still wins",
+                head(at(0, -5, 0, 1.5F), true, unscaled, true));
+
+        // Nothing in, no crash and no claim.
+        says("nothing declared at all is not a request",
+                !head(null, false, null, false));
+        says("and an offhand nobody declared is nothing to be larger than",
+                !head(at(0, -15.5F, 7.25F, 1.8F), true, null, false));
+    }
+
     public static void main(String[] args) {
 
         theBow();
@@ -953,6 +1037,7 @@ public final class FigureTest {
         rememberingTheChoice();
         notWritingForNothing();
         somethingToPutItOn();
+        whichWayItIsWorn();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
