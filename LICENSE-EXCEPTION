@@ -1,0 +1,32 @@
+Custom Model Catalogue - a catalogue of the custom item models in your resource packs
+Copyright (C) 2026 harryforest2003
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.  The full text is in LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+
+                 ADDITIONAL PERMISSION UNDER GNU GPL VERSION 3
+                                   SECTION 7
+
+This program is a Minecraft mod, and Minecraft is not free software.  Without
+the permission below, the licence would ask for something nobody could give:
+that the whole of the combined work be released under these terms.
+
+So: if you modify this Program, or any covered work, by linking or combining it
+with Minecraft, with a Minecraft mod loader such as Fabric Loader, or with any
+mod, library or launcher distributed for use with Minecraft, the copyright
+holder grants you additional permission to convey the resulting work.  The
+Corresponding Source for a non-source form of such a combination need not
+include the source of those other parts, but must still include the source of
+this Program and of everything derived from it.
+
+Nothing else is relaxed.  If you publish something built on this code, that
+work is still covered by the GNU General Public License: its source has to be
+available under these same terms, and the copyright notice above has to travel
+with it.  That notice is the credit.

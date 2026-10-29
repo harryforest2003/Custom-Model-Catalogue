@@ -333,6 +333,11 @@ jar {
     from("LICENSE") {
         rename { "${it}_${projectName}" }
     }
+    // The permission that makes the licence above workable for a Minecraft
+    // mod. It travels with the licence or it may as well not exist.
+    from("LICENSE-EXCEPTION") {
+        rename { "${it}_${projectName}" }
+    }
     // Apache-2.0 attribution for the algorithms adapted from Custom Model Data
     // Viewer has to travel with the jar, not just sit in the repository.
     from("NOTICE") {

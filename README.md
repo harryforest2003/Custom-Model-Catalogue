@@ -80,7 +80,7 @@ looks like a plausible one.
 ## Licence
 
 GNU GPL v3 or later, with an additional permission for linking with Minecraft and its mod
-loaders. Use the code freely; if you publish anything built on it, publish its source under the
+loaders (`LICENSE-EXCEPTION`). Use the code freely; if you publish anything built on it, publish its source under the
 same terms and keep the copyright notice with it. See `LICENSE`, and `NOTICE` for the Apache-2.0
 attribution covering algorithms adapted from
 Custom Model Data Viewer.
