@@ -201,12 +201,32 @@ public final class ExplorerScanner {
                     new dev.custommodels.cmv.explorer.graph.NameResolver(source);
             for (LogicalModel model : models) {
                 checkCancelled();
-                model.applyResolvedName(names.resolve(
+                dev.custommodels.cmv.explorer.graph.ResolvedName resolved = names.resolve(
                         model.defaultState().modelId(),
                         model.definitionId(),
                         model.baseItemId(),
                         model.customModelData(),
-                        model.displayName()));
+                        model.displayName());
+                // What the server calls it, where a fetched catalogue says.
+                // Settled here and not in the wrap catalogue, because this is
+                // the name every screen reads: the card, the grid and the
+                // tooltip all come back to the model's own resolved name, and
+                // one put on a wrap target reaches none of them.
+                dev.custommodels.cmv.core.ItemFacts.Fact stated =
+                        dev.custommodels.cmv.core.CmvConfig.get().itemFacts
+                                ? dev.custommodels.cmv.core.ItemFacts.forModel(
+                                        model.baseItemId(), model.customModelData())
+                                : null;
+                if (stated != null && stated.name() != null && !stated.name().isEmpty()) {
+                    String evidence = stated.crate() == null || stated.crate().isEmpty()
+                            ? model.baseItemId()
+                            : stated.crate() + " \u2014 " + model.baseItemId();
+                    resolved = dev.custommodels.cmv.explorer.graph.ResolvedName.of(
+                            stated.name(),
+                            dev.custommodels.cmv.explorer.graph.ResolvedName.Source.SERVER,
+                            evidence);
+                }
+                model.applyResolvedName(resolved);
             }
             report.setNaming(names.entriesLoaded(), names.filesRead());
 

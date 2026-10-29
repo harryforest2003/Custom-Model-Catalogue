@@ -118,12 +118,17 @@ public final class ExplorerIndex {
      *
      * <p>Both the catalogue and the detail view need it — the detail view to
      * answer "what would applying this model actually do" — and building it
-     * twice for the same scan is pure duplication. Rebuilt only when the scan
-     * changes, which is what keeps opening a screen free.</p>
+     * twice for the same scan is pure duplication. Rebuilt when the scan
+     * changes or when the item-facts document does, which is what keeps
+     * opening a screen free without letting it go stale.</p>
      */
     public dev.custommodels.cmv.wrap.WrapCatalogue catalogue() {
         dev.custommodels.cmv.wrap.WrapCatalogue current = catalogue;
-        String print = String.valueOf(models.hashCode());
+        // The facts document is part of what the catalogue is built from, so
+        // it is part of what decides whether the catalogue is still current.
+        // Keyed on the models alone, a fetch changed nothing anybody looked at.
+        String print = models.hashCode()
+                + ":" + dev.custommodels.cmv.core.ItemFacts.stamp();
         if (current == null || !print.equals(current.fingerprint())) {
             current = dev.custommodels.cmv.wrap.WrapCatalogue.build(
                     models, McCompat::itemExists, print);

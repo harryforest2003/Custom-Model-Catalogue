@@ -15,8 +15,19 @@ package dev.custommodels.cmv.explorer.graph;
  */
 public record ResolvedName(String value, Source source, String evidence) {
 
-    /** Ordered best first. {@link #TRANSLATION} is the only one that is not a guess. */
+    /** Ordered best first. The first two are the only ones that are not guesses. */
     public enum Source {
+        /**
+         * What the server calls it, from a catalogue it published.
+         *
+         * <p>Above every other source because it is the only one that is not
+         * read off the pack at all. A pack says what a thing looks like; the
+         * server says what it is called, and where the two are both available
+         * the server is simply right. Held in a document of this mod's own, so
+         * it keeps answering after the catalogue stops — see {@link
+         * dev.custommodels.cmv.core.ItemFacts}.</p>
+         */
+        SERVER("Server catalogue", Confidence.HIGH),
         /** A language file entry in the pack. The author's own words. */
         TRANSLATION("Resource-pack translation", Confidence.HIGH),
         /** An {@code item_name} or {@code custom_name} in the item definition. */
@@ -68,7 +79,19 @@ public record ResolvedName(String value, Source source, String evidence) {
 
     /** True when the pack actually said this, rather than it being derived. */
     public boolean isStated() {
-        return source == Source.TRANSLATION || source == Source.ITEM_NAME;
+        return source == Source.SERVER || source == Source.TRANSLATION
+                || source == Source.ITEM_NAME;
+    }
+
+    /**
+     * Whether the server itself said this, rather than the pack.
+     *
+     * <p>Asked where a name this mod worked out would be marked as not being
+     * the item's own: a name the server publishes <em>is</em> the item's own,
+     * and dressing that one up would be saying something untrue about it.</p>
+     */
+    public boolean isFromServer() {
+        return source == Source.SERVER;
     }
 
     public static ResolvedName of(String value, Source source, String evidence) {

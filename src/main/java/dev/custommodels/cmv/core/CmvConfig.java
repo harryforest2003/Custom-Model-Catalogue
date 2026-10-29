@@ -397,6 +397,25 @@ public final class CmvConfig {
     public boolean headSkins = true;
 
     /**
+     * Where {@code /cmvcat facts update} fetches an item catalogue from.
+     *
+     * <p>A base address; the three endpoints under it are asked for by name.
+     * Any server that publishes the same shape can be pointed at by changing
+     * this, and emptying it switches the whole thing off. Nothing is fetched
+     * unless the command is run, and what a fetch leaves behind goes on
+     * working if this address never answers again — see {@link ItemFacts}.</p>
+     */
+    public String itemFactsUrl = "https://items.blossomcraft.org";
+
+    /**
+     * Use the names and crates a fetched catalogue gave, where it has them.
+     *
+     * <p>Off switches the document out of the way without deleting it, so the
+     * pack's own inferred names come back and can be compared.</p>
+     */
+    public boolean itemFacts = true;
+
+    /**
      * Namespaces the scan is to leave alone, e.g. {@code modelengine}.
      *
      * <p>A pack is not always all of one thing. An ItemsAdder export bundles

@@ -46,6 +46,60 @@ public final class ModCommands {
      * turning off are the ones filling the grid, and a pack that bundles a
      * server's whole plugin set has a long tail nobody needs to read.</p>
      */
+    /**
+     * Sets the fetched document is certain about, listed or made.
+     *
+     * <p>Nothing is built from a document that describes no sets, which is
+     * every catalogue that does not publish them. Nothing is built from a set
+     * that arrived incomplete, or whose pieces are not in the packs installed
+     * here. Everything else is reported with the reason, so a set that did not
+     * appear says why rather than going missing.</p>
+     */
+    private static int statedSets(boolean make) {
+        java.util.Map<String, dev.custommodels.cmv.core.ItemFacts.SetFacts> described =
+                dev.custommodels.cmv.core.ItemFacts.sets();
+        if (described.isEmpty()) {
+            info("The item-facts document describes no sets, so none are built.");
+            return 1;
+        }
+        dev.custommodels.cmv.wrap.WrapCatalogue catalogue =
+                dev.custommodels.cmv.explorer.scan.ExplorerIndex.get().catalogue();
+
+        // key -> model, built once from the catalogue rather than searched per
+        // piece: a set page's worth of lookups over every wrap is not free.
+        java.util.Map<String, String> byKey = new java.util.HashMap<>();
+        for (dev.custommodels.cmv.wrap.WrapTarget target : catalogue.all()) {
+            target.customModelDataByItem().forEach((item, entries) -> {
+                for (dev.custommodels.cmv.wrap.WrapTarget.CustomModelDataEntry entry : entries) {
+                    if (entry.numeric()) {
+                        byKey.putIfAbsent(
+                                dev.custommodels.cmv.core.ItemFacts.key(item, entry.number()),
+                                target.model().defaultState().modelId());
+                    }
+                }
+            });
+        }
+
+        java.util.List<dev.custommodels.cmv.collection.StatedSets.Plan> plans =
+                dev.custommodels.cmv.collection.StatedSets.plan(described, byKey::get);
+        long ready = plans.stream().filter(
+                dev.custommodels.cmv.collection.StatedSets.Plan::definitive).count();
+        if (!make) {
+            info(ready + " of " + plans.size() + " described sets are complete here."
+                    + (ready > 0 ? "  Run /cmvcat facts sets make to add them." : ""));
+            for (dev.custommodels.cmv.collection.StatedSets.Plan plan : plans) {
+                if (!plan.definitive()) {
+                    info("  skipped " + plan.name() + " - " + plan.why());
+                }
+            }
+            return 1;
+        }
+        int made = dev.custommodels.cmv.collection.StatedSets.apply(
+                dev.custommodels.cmv.collection.SkinSets.get(), plans, "From the server");
+        info("Added " + made + " set(s) under \"From the server\".");
+        return 1;
+    }
+
     private static int listNamespaces() {
         CmvConfig config = CmvConfig.get();
         java.util.Map<String, Integer> counts = new java.util.HashMap<>();
@@ -168,8 +222,51 @@ public final class ModCommands {
                                     .executes(context -> toggleNamespace(
                                             StringArgumentType.getString(context, "namespace")))))
 
-                    // Driven by hand on purpose. It writes a resource pack into
-                    // the game and reloads, and until that has been seen to work
+                    // Builds the item-facts document from a server catalogue.
+                    // The only command here that touches a network, and it says
+                    // what it wrote rather than doing it quietly.
+                    .then(ClientCommands.literal("facts")
+                            .executes(context -> {
+                                info(dev.custommodels.cmv.core.ItemFacts.count()
+                                        + " items described, from "
+                                        + (dev.custommodels.cmv.core.ItemFacts.source().isEmpty()
+                                                ? "nowhere yet"
+                                                : dev.custommodels.cmv.core.ItemFacts.source())
+                                        + (dev.custommodels.cmv.core.ItemFacts.updated().isEmpty()
+                                                ? "" : ", updated "
+                                                        + dev.custommodels.cmv.core.ItemFacts.updated()));
+                                return 1;
+                            })
+                            .then(ClientCommands.literal("update")
+                                    .executes(context -> {
+                                        String url = CmvConfig.get().itemFactsUrl;
+                                        info("Fetching the item catalogue from " + url);
+                                        dev.custommodels.cmv.core.ItemFactsFetch.update(url,
+                                                outcome -> McCompat.mc().execute(() -> {
+                                                    info(outcome.message());
+                                                    if (outcome.ok()) {
+                                                        // The names are read while
+                                                        // the catalogue is built, so
+                                                        // the grid has to be built
+                                                        // again to show them.
+                                                        dev.custommodels.cmv.explorer.scan
+                                                                .ExplorerIndex.get().refresh();
+                                                    }
+                                                }));
+                                        return 1;
+                                    }))
+                            // Sets, but only the ones the document is sure of.
+                            .then(ClientCommands.literal("sets")
+                                    .executes(context -> statedSets(false))
+                                    .then(ClientCommands.literal("make")
+                                            .executes(context -> statedSets(true))))
+                            .then(ClientCommands.literal("forget")
+                                    .executes(context -> {
+                                        dev.custommodels.cmv.core.ItemFacts.reload();
+                                        info("Read the item-facts document again.");
+                                        return 1;
+                                    })))
+
                     .then(ClientCommands.argument("search", StringArgumentType.greedyString())
                             .executes(context -> openExplorer(
                                     StringArgumentType.getString(context, "search")))));

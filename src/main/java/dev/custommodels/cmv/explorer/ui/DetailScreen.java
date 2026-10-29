@@ -360,7 +360,42 @@ public final class DetailScreen extends Screen {
         int startY = y;
 
         y = section(graphics, "IDENTITY", x, y);
-        y = field(graphics, "Name", model.displayName(), x, y, width);
+        // Beside the name, and only when the server actually gave colours for
+        // it: a button that copies nothing is worse than no button.
+        String codes = serverColours();
+        if (!codes.isEmpty()) {
+            Button copy = new Button(COPY_COLOUR,
+                    x + width - this.font.width(COPY_COLOUR) - 12, y - 1,
+                    () -> {
+                        McCompat.copyToClipboard(codes);
+                        CmvMod.LOGGER.info("Copied the colour codes {}", codes);
+                    });
+            copy.draw(graphics, mouseX, mouseY);
+            buttons.add(copy);
+        }
+        // Drawn as the server draws it where there is one to draw: same words,
+        // same colours. Falls back to the plain field for everything else.
+        dev.custommodels.cmv.core.ItemFacts.Fact stated = serverFact();
+        if (stated != null && stated.parts() != null && !stated.parts().isEmpty()) {
+            GuiTheme.text(graphics, this.font, "Name", x, y, GuiTheme.TEXT_MUTED, false);
+            y += LINE;
+            GuiTheme.text(graphics, this.font, stated.coloured(), x + 6, y,
+                    GuiTheme.TEXT_BRIGHT, false);
+            y += LINE + 2;
+        } else {
+            y = field(graphics, "Name", model.displayName(), x, y, width);
+        }
+        if (stated != null) {
+            if (stated.set() != null && !stated.set().isEmpty()) {
+                y = field(graphics, "Set", stated.set(), x, y, width);
+            }
+            if (stated.rarity() != null && !stated.rarity().isEmpty()) {
+                y = field(graphics, "Rarity", stated.rarity(), x, y, width);
+            }
+            if (stated.crate() != null && !stated.crate().isEmpty()) {
+                y = field(graphics, "Crate", stated.crate(), x, y, width);
+            }
+        }
         y = field(graphics, model.baseItemIsRegistered() ? "Base item" : "Item definition id",
                 model.baseItemLabel(), x, y, width);
         if (!model.alsoCarriedBy().isEmpty()) {
@@ -1125,6 +1160,42 @@ public final class DetailScreen extends Screen {
         GuiTheme.rect(graphics, x, y + 10, x + 200, y + 11, GuiTheme.BORDER);
         return y + LINE + 4;
     }
+
+    /**
+     * What the server says about this model, worked out once per card.
+     *
+     * <p>Looked up by the model's own item and values rather than by building
+     * a stack, which is the same join the scanner uses for the name.</p>
+     */
+    private dev.custommodels.cmv.core.ItemFacts.Fact serverFact() {
+        if (!serverFactKnown) {
+            serverFactKnown = true;
+            serverFact = CmvConfig.get().itemFacts
+                    ? dev.custommodels.cmv.core.ItemFacts.forModel(
+                            model.baseItemId(), model.customModelData())
+                    : null;
+        }
+        return serverFact;
+    }
+
+    private dev.custommodels.cmv.core.ItemFacts.Fact serverFact;
+    private boolean serverFactKnown;
+
+    private String serverColours() {
+        if (serverColours == null) {
+            // Once per card, not once per frame: the answer never changes
+            // while the card is open.
+            dev.custommodels.cmv.core.ItemFacts.Fact fact = serverFact();
+            serverColours = fact == null ? "" : fact.colourCodes();
+        }
+        return serverColours;
+    }
+
+    /** The colours for this card, worked out on the first frame that asks. */
+    private String serverColours;
+
+    /** What the button says. Constant, so it costs nothing to draw. */
+    private static final String COPY_COLOUR = "Copy colour";
 
     private int field(GuiGraphicsExtractor graphics, String label, String value,
                       int x, int y, int width) {
