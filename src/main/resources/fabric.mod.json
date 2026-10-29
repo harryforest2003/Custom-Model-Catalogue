@@ -8,7 +8,7 @@
     "You"
   ],
   "contact": {},
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "environment": "client",
   "entrypoints": {
     "client": [

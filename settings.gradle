@@ -9,4 +9,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'custom-model-viewer'
+rootProject.name = 'custom-model-catalogue'
