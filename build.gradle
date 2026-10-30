@@ -48,6 +48,13 @@ base {
 
 repositories {
     // Loom adds the Minecraft and Fabric repositories automatically.
+    maven {
+        name = 'Terraformers'
+        url = 'https://maven.terraformersmc.com/releases'
+        // Mod Menu and nothing else, so a typo in a dependency cannot quietly
+        // be satisfied from here.
+        content { includeGroup 'com.terraformersmc' }
+    }
 }
 
 dependencies {
@@ -71,6 +78,17 @@ dependencies {
         // does not offer `modImplementation` at all.
         implementation "net.fabricmc:fabric-loader:${project.loader_version}"
         implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    }
+
+    // Compile only. Mod Menu is how a Fabric mod is expected to offer its
+    // settings, and implementing its one interface needs the interface - but
+    // nothing here calls into it, so the mod loads and runs identically with
+    // Mod Menu absent. Its version is per target because the API moves with
+    // Minecraft: 20.x is 26.2 and 17.x is 1.21.11.
+    if (obfuscated) {
+        modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+    } else {
+        compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
     }
 }
 

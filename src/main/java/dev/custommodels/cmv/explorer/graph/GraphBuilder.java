@@ -124,6 +124,20 @@ public final class GraphBuilder {
     private int skippedBroken;
 
     /**
+     * Models a definition reaches whose geometry is not there, by model id.
+     *
+     * <p>Noted whether or not they are then dropped. What the grid shows is a
+     * preference; what the packs are missing is a fact, and the page that
+     * reports it should not change its answer because of a switch about
+     * display. Split by which fault it is because they want different
+     * answers: a missing file is usually a pack that was not shipped whole,
+     * and a model that resolves to nothing is usually a template meant to be
+     * inherited from rather than drawn.</p>
+     */
+    private final List<String> missingModels = new ArrayList<>();
+    private final List<String> emptyModels = new ArrayList<>();
+
+    /**
      * @param resolver              supplies resolved models; its caches are what
      *                              keep this cheap for large packs
      * @param classifier            maps a base item id to a type; supplied by the
@@ -159,6 +173,21 @@ public final class GraphBuilder {
 
     public int skippedVanilla() {
         return skippedVanilla;
+    }
+
+    /** How many states were dropped for being broken, when they are dropped. */
+    public int skippedBroken() {
+        return skippedBroken;
+    }
+
+    /** Model ids a definition asked for that no enabled pack ships. */
+    public List<String> missingModels() {
+        return List.copyOf(missingModels);
+    }
+
+    /** Model ids that resolve to a file with no geometry in it. */
+    public List<String> emptyModels() {
+        return List.copyOf(emptyModels);
     }
 
 
@@ -471,6 +500,13 @@ public final class GraphBuilder {
                 .thenComparingInt(DiscoveredModel::discoveryIndex));
 
         List<ModelState> states = buildStates(ordered);
+        for (ModelState state : states) {
+            if (!state.resolved().exists()) {
+                missingModels.add(state.modelId());
+            } else if (state.resolved().isEmpty()) {
+                emptyModels.add(state.modelId());
+            }
+        }
         if (!includeBroken) {
             List<ModelState> usable = new ArrayList<>(states.size());
             for (ModelState state : states) {

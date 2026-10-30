@@ -76,6 +76,7 @@ public final class ExplorerTest {
         renderTests();
         textureNamespaceTests();
         whatLooksLikeThis();
+        whatThePacksAreMissing();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -2185,6 +2186,61 @@ public final class ExplorerTest {
      * matching an empty hash would have every model with no geometry claim to
      * look like every other.</p>
      */
+    /**
+     * What the pack-health page is built on: the broken ones, always noted.
+     *
+     * <p>The display setting decides whether a broken state reaches the grid.
+     * It must not decide whether the scan noticed, because the page that
+     * reports on packs would then say different things depending on a
+     * preference about cards — and would say nothing at all in the
+     * configuration where somebody has turned the clutter off, which is
+     * exactly when they want the report.</p>
+     */
+    private static void whatThePacksAreMissing() {
+        header("Pack health");
+
+        MemorySource source = new MemorySource();
+        source.model("p:item/there", """
+                {"elements":[{"from":[0,0,0],"to":[16,16,16],"faces":{
+                   "north":{"uv":[0,0,16,16],"texture":"#all"}}}],
+                 "textures":{"all":"p:t"}}""");
+        source.texture("p:t", 16, 16);
+        // p:item/gone is never defined, and p:item/hollow resolves to a file
+        // with no geometry in it.
+        source.model("p:item/hollow", "{}");
+
+        String definition = """
+                {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
+                  "cases":[
+                    {"when":"a","model":{"type":"minecraft:model","model":"p:item/there"}},
+                    {"when":"b","model":{"type":"minecraft:model","model":"p:item/gone"}},
+                    {"when":"c","model":{"type":"minecraft:model","model":"p:item/hollow"}}]}}
+                """;
+
+        for (boolean listing : new boolean[]{true, false}) {
+            GraphBuilder builder = newBuilder(source, true).includeBroken(listing);
+            builder.build(parse("minecraft:diamond_sword", definition));
+            String when = listing ? " while listing them" : " while leaving them out";
+            check("a model no pack ships is noted" + when,
+                    builder.missingModels().stream().anyMatch(id -> id.endsWith("gone")));
+            check("a model that draws nothing is noted" + when,
+                    builder.emptyModels().stream().anyMatch(id -> id.endsWith("hollow")));
+            check("and the one that is fine is in neither list" + when,
+                    builder.missingModels().stream().noneMatch(id -> id.endsWith("there"))
+                            && builder.emptyModels().stream()
+                                    .noneMatch(id -> id.endsWith("there")));
+        }
+
+        GraphBuilder dropping = newBuilder(source, true).includeBroken(false);
+        dropping.build(parse("minecraft:diamond_sword", definition));
+        check("only the run that drops them counts them as skipped",
+                dropping.skippedBroken() == 2);
+        GraphBuilder keeping = newBuilder(source, true).includeBroken(true);
+        keeping.build(parse("minecraft:diamond_sword", definition));
+        check("and the run that lists them skips nothing",
+                keeping.skippedBroken() == 0);
+    }
+
     private static void whatLooksLikeThis() {
         header("Look-alikes");
 

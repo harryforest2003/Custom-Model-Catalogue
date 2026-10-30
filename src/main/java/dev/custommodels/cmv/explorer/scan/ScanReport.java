@@ -144,6 +144,44 @@ public final class ScanReport {
         return heuristicGroups;
     }
 
+    /**
+     * What the packs are missing, for the pack-health page.
+     *
+     * <p>Held sorted and distinct: the same model is reached from many
+     * definitions in these packs - a shared template is referenced hundreds of
+     * times - and a page listing it once per reference would be a page of one
+     * repeated line.</p>
+     */
+    private List<String> missingModels = List.of();
+    private List<String> emptyModels = List.of();
+    private int brokenSkipped;
+
+    synchronized void setBroken(List<String> missing, List<String> empty, int skipped) {
+        this.missingModels = distinctSorted(missing);
+        this.emptyModels = distinctSorted(empty);
+        this.brokenSkipped = skipped;
+    }
+
+    private static List<String> distinctSorted(List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return ids.stream().distinct().sorted().toList();
+    }
+
+    public synchronized List<String> missingModels() {
+        return missingModels;
+    }
+
+    public synchronized List<String> emptyModels() {
+        return emptyModels;
+    }
+
+    /** How many states were dropped from the grid for being broken. */
+    public synchronized int brokenSkipped() {
+        return brokenSkipped;
+    }
+
     public int vanillaSkipped() {
         return vanillaSkipped;
     }

@@ -170,7 +170,23 @@ public final class CatalogueScreen extends Screen {
          * the tabs above still decide whether clicking a card applies it or
          * opens its details.</p>
          */
-        SETS("Sets", "Your own lists. Click one to open it");
+        SETS("Sets", "Your own lists. Click one to open it"),
+        /**
+         * Every setting, where they used to be in a file nobody finds.
+         *
+         * <p>Last, because it is the page you visit once. Everything on it
+         * reads and writes the same config the file does, so a value changed
+         * here is the value the file holds a moment later.</p>
+         */
+        SETTINGS("Settings", "Everything this mod can be told to do differently"),
+        /**
+         * What the packs are missing, for whoever is making them.
+         *
+         * <p>Off by default and switched on from the settings page. A player
+         * cannot act on a list of models their packs do not ship; the person
+         * who built the pack can, and this is the only place that knows.</p>
+         */
+        HEALTH("Pack health", "Models the packs ask for and do not ship");
 
         final String label;
         final String blurb;
@@ -372,6 +388,21 @@ public final class CatalogueScreen extends Screen {
     }
 
     /**
+     * Opens on the settings page, for Mod Menu's configure button.
+     *
+     * <p>Takes the screen to come back to, which is Mod Menu's own list.
+     * {@code looseParent} already exists for exactly this - a way in from
+     * somewhere that is not the game's menu - and {@code onClose} honours it,
+     * so closing goes back where it came from rather than to the world.</p>
+     */
+    public static CatalogueScreen settings(Screen parent) {
+        CatalogueScreen screen = new CatalogueScreen();
+        screen.tab = Tab.SETTINGS;
+        screen.looseParent = parent;
+        return screen;
+    }
+
+    /**
      * Opens on the home page, for the key bind.
      *
      * <p>The key is the one way in that carries no intent with it — a command
@@ -475,6 +506,8 @@ public final class CatalogueScreen extends Screen {
         // Both tabs offer the pack filter, so the list of packs is worked out
         // for both rather than only where it used to be shown.
         rebuildHome();
+        rebuildSettings();
+        rebuildHealth();
         packs = ExplorerQuery.packsOf(index.browsable());
         if (!packFilter.isEmpty() && !packs.contains(packFilter)) {
             // The pack it was set to is no longer loaded.
@@ -630,7 +663,19 @@ public final class CatalogueScreen extends Screen {
      * apply, which left a strip of nothing above the grid everywhere else.</p>
      */
     private boolean showsItemStrip() {
-        return applying && tab != Tab.HOME && !oneItem;
+        return applying && !prose() && !oneItem;
+    }
+
+    /**
+     * Whether this page is reading matter rather than a grid of cards.
+     *
+     * <p>Three pages are, and every one of them wants the same things: no
+     * filter chips, no item strip, the whole height, and the scroll wheel.
+     * Asking the question once is what keeps a fourth from having to find
+     * seven separate places that said {@code tab == Tab.HOME}.</p>
+     */
+    private boolean prose() {
+        return tab == Tab.HOME || tab == Tab.SETTINGS || tab == Tab.HEALTH;
     }
 
     /** True when the grid is showing one set rather than everything. */
@@ -644,7 +689,7 @@ public final class CatalogueScreen extends Screen {
         // since both are worked out from here.
         return HEADER_H + filterHeight()
                 + (showsItemStrip() ? ITEM_STRIP_H : 0) + 4
-                + (inSet() && tab != Tab.HOME ? 18 : 0);
+                + (inSet() && !prose() ? 18 : 0);
     }
 
     private int gridBottom() {
@@ -792,6 +837,10 @@ public final class CatalogueScreen extends Screen {
 
         int y = HEADER_H + 6;
         for (Tab candidate : Tab.values()) {
+            if (candidate == Tab.HEALTH && !CmvConfig.get().packHealth) {
+                // Not a page a player can act on; see the setting.
+                continue;
+            }
             boolean selected = tab == candidate;
             boolean hover = inside(mouseX, mouseY, 0, y, sidebarWidth(), NAV_ROW_H);
             GuiTheme.navItem(graphics, this.font, 0, y, sidebarWidth(), NAV_ROW_H,
@@ -967,7 +1016,7 @@ public final class CatalogueScreen extends Screen {
      * on.</p>
      */
     private int chipRowCount() {
-        if (tab == Tab.HOME) {
+        if (prose()) {
             // None of them mean anything to a page of diagnostics, and the
             // page would rather have the height.
             return 0;
@@ -1002,7 +1051,7 @@ public final class CatalogueScreen extends Screen {
             rebuild();
         });
 
-        if (tab == Tab.HOME) {
+        if (prose()) {
             chipLabels.clear();
             drawFilterEdge(graphics);
             return;
@@ -1213,6 +1262,14 @@ public final class CatalogueScreen extends Screen {
         hoveredModel = null;
         if (tab == Tab.HOME) {
             drawHome(graphics, mouseX, mouseY);
+            return;
+        }
+        if (tab == Tab.SETTINGS) {
+            homeContentHeight = drawRows(graphics, mouseX, mouseY, settingsRows);
+            return;
+        }
+        if (tab == Tab.HEALTH) {
+            homeContentHeight = drawRows(graphics, mouseX, mouseY, healthRows);
             return;
         }
         if (tab == Tab.SETS && !inSet()) {
@@ -1459,12 +1516,25 @@ public final class CatalogueScreen extends Screen {
      * answer.</p>
      */
     private void drawHome(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        homeContentHeight = drawRows(graphics, mouseX, mouseY, homeRows);
+    }
+
+    /**
+     * Draws a page of rows and says how tall it came out.
+     *
+     * <p>Shared by the three pages that are prose rather than cards. They
+     * differ only in which rows they hand over, which is the whole reason the
+     * row carries its own action: a setting that can be clicked and a line
+     * that cannot are the same thing to whatever is drawing them.</p>
+     */
+    private int drawRows(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                         List<HomeRow> rows) {
         int left = sidebarWidth() + PAD;
         int right = this.width - PAD;
         int top = gridTop();
         int bottom = this.height - FOOTER_H - 4;
         int y = top - homeScroll;
-        for (HomeRow row : homeRows) {
+        for (HomeRow row : rows) {
             if (row.heading()) {
                 y = homeHeading(graphics, left, y, right, top, bottom, row.text());
             } else if (row.action() != null) {
@@ -1473,7 +1543,7 @@ public final class CatalogueScreen extends Screen {
                 y = homeLine(graphics, left, y, top, bottom, row.text(), row.colour());
             }
         }
-        homeContentHeight = y + homeScroll - top;
+        return y + homeScroll - top;
     }
 
     /**
@@ -1489,6 +1559,8 @@ public final class CatalogueScreen extends Screen {
     }
 
     private List<HomeRow> homeRows = List.of();
+    private List<HomeRow> settingsRows = List.of();
+    private List<HomeRow> healthRows = List.of();
 
     /**
      * Gathers what the diagnostics page shows.
@@ -1498,6 +1570,213 @@ public final class CatalogueScreen extends Screen {
      * which is fine once and is tens of thousands of comparisons a frame if it
      * is done where it is drawn.</p>
      */
+    /**
+     * The settings page: every value the config file holds, as a row each.
+     *
+     * <p>Built when something changes rather than per frame, like the other
+     * two pages. Each control writes the config and saves it immediately -
+     * there is no apply button, because there is nothing to batch: every one
+     * of these takes effect the moment it is read, and a page of changes that
+     * had not happened yet would be the surprising version.</p>
+     *
+     * <p>A setting that only matters after a rescan says so rather than
+     * rescanning on its own. Walking thirteen thousand definitions because
+     * somebody toggled a checkbox is not a thing to do without being asked.
+     * </p>
+     */
+    private void rebuildSettings() {
+        CmvConfig config = CmvConfig.get();
+        List<HomeRow> rows = new ArrayList<>();
+
+        rows.add(new HomeRow("WHAT THE GRID SHOWS", 0, true));
+        rows.add(toggle("Models whose files are missing", config.showBrokenEntries,
+                "listed and labelled", "left out",
+                () -> config.showBrokenEntries = !config.showBrokenEntries, true));
+        rows.add(toggle("Group models by file name", config.groupByFilename,
+                "on", "off", () -> config.groupByFilename = !config.groupByFilename, true));
+        rows.add(new HomeRow("Both take effect on the next scan.  Press R to rescan now.",
+                GuiTheme.TEXT_MUTED, false));
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("PREVIEWS", 0, true));
+        rows.add(toggle("Animate the cards in the grid", config.animateCards,
+                "on", "off", () -> config.animateCards = !config.animateCards, false));
+        rows.add(toggle("Turn the model in the detail view", config.autoRotateDetail,
+                "on", "off", () -> config.autoRotateDetail = !config.autoRotateDetail, false));
+        rows.add(toggle("Step through a model's states", config.cycleDetailStates,
+                "on", "off", () -> config.cycleDetailStates = !config.cycleDetailStates, false));
+        rows.add(toggle("Play animated textures", config.animateDetailTextures,
+                "on", "off",
+                () -> config.animateDetailTextures = !config.animateDetailTextures, false));
+        rows.add(cycle("Preview quality", config.previewQuality,
+                () -> config.previewQuality = CmvConfig.PreviewQuality
+                        .valueOf(config.previewQuality).next().name()));
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("THE FIGURE", 0, true));
+        rows.add(toggle("Open the detail view on your own figure", config.figureInDetail,
+                "on", "off", () -> config.figureInDetail = !config.figureInDetail, false));
+        rows.add(toggle("Draw a worn model as its model", config.headSkins,
+                "on", "off", () -> config.headSkins = !config.headSkins, false));
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("EXPORTS", 0, true));
+        rows.add(number("Frames in an animated preview", config.exportFrames,
+                new int[]{24, 36, 48, 72, 96, 120},
+                value -> config.exportFrames = value));
+        rows.add(number("Seconds for one turn", (int) config.exportSpinSeconds,
+                new int[]{2, 4, 6, 8, 12, 20},
+                value -> config.exportSpinSeconds = value));
+        rows.add(number("Exported image size", config.exportSize,
+                new int[]{128, 256, 512, 1024}, value -> config.exportSize = value));
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("THE SERVER'S OWN NAMES", 0, true));
+        rows.add(toggle("Use a fetched catalogue's names", config.itemFacts,
+                "on", "off", () -> config.itemFacts = !config.itemFacts, true));
+        rows.add(new HomeRow("Fetched from " + (config.itemFactsUrl.isEmpty()
+                ? "nowhere - the address is empty" : config.itemFactsUrl),
+                GuiTheme.TEXT_MUTED, false));
+        rows.add(new HomeRow("Run /cmvcat facts update to fetch it.  "
+                + dev.custommodels.cmv.core.ItemFacts.count() + " items are described now.",
+                GuiTheme.TEXT_MUTED, false));
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("FOR PACK AUTHORS", 0, true));
+        rows.add(toggle("Show the pack health page", config.packHealth,
+                "on", "off", () -> config.packHealth = !config.packHealth, false));
+        rows.add(toggle("Show how each model was resolved", config.debugResolution,
+                "on", "off", () -> config.debugResolution = !config.debugResolution, false));
+
+        settingsRows = List.copyOf(rows);
+    }
+
+    /** A row that flips a boolean, saves, and says which way it now is. */
+    private HomeRow toggle(String label, boolean now, String onWord, String offWord,
+                           Runnable flip, boolean needsRescan) {
+        String said = label + ":  " + (now ? onWord : offWord)
+                + (needsRescan && !now ? "" : "");
+        return new HomeRow(said, GuiTheme.TEXT_BRIGHT, false, () -> {
+            flip.run();
+            CmvConfig.get().save();
+            rebuild();
+        });
+    }
+
+    /** A row that steps a number through a short list of sensible values. */
+    private HomeRow number(String label, int now, int[] choices,
+                           java.util.function.IntConsumer set) {
+        int next = choices[0];
+        for (int i = 0; i < choices.length; i++) {
+            if (choices[i] == now) {
+                next = choices[(i + 1) % choices.length];
+                break;
+            }
+        }
+        final int chosen = next;
+        return new HomeRow(label + ":  " + now, GuiTheme.TEXT_BRIGHT, false, () -> {
+            set.accept(chosen);
+            CmvConfig.get().save();
+            rebuild();
+        });
+    }
+
+    /** A row that steps an enum stored as its own name. */
+    private HomeRow cycle(String label, String now, Runnable step) {
+        return new HomeRow(label + ":  " + now.toLowerCase(Locale.ROOT),
+                GuiTheme.TEXT_BRIGHT, false, () -> {
+            step.run();
+            CmvConfig.get().save();
+            rebuild();
+        });
+    }
+
+    /**
+     * The pack-health page: what the packs ask for and do not ship.
+     *
+     * <p>Grouped by namespace rather than by pack, which looks like an
+     * oversight and is the point: a model no pack ships belongs to no pack,
+     * so there is nothing to group it by but the name it was asked for
+     * under.</p>
+     */
+    private void rebuildHealth() {
+        ScanReport report = index.report();
+        List<HomeRow> rows = new ArrayList<>();
+        List<String> missing = report.missingModels();
+        List<String> empty = report.emptyModels();
+
+        rows.add(new HomeRow("WHAT THE PACKS ARE MISSING", 0, true));
+        if (missing.isEmpty() && empty.isEmpty()) {
+            rows.add(new HomeRow(index.models().isEmpty()
+                    ? "Nothing has been scanned yet."
+                    : "Every model every definition asks for is present. Nothing to report.",
+                    GuiTheme.TEXT_MUTED, false));
+            healthRows = List.copyOf(rows);
+            return;
+        }
+        rows.add(new HomeRow(missing.size() + " model file(s) referenced and not shipped, "
+                + empty.size() + " resolving to no geometry.", GuiTheme.TEXT_WARN, false));
+        rows.add(new HomeRow(report.brokenSkipped() > 0
+                ? report.brokenSkipped() + " state(s) are being left out of the grid, "
+                        + "because \"models whose files are missing\" is off."
+                : "They are listed in the grid and labelled, because \"models whose "
+                        + "files are missing\" is on.", GuiTheme.TEXT_MUTED, false));
+        rows.add(new HomeRow("Copy the lot", GuiTheme.TEXT_BRIGHT, false, () -> {
+            StringBuilder out = new StringBuilder();
+            for (String id : missing) {
+                out.append("missing  ").append(id).append('\n');
+            }
+            for (String id : empty) {
+                out.append("no geometry  ").append(id).append('\n');
+            }
+            McCompat.copyToClipboard(out.toString());
+            packResult = "Copied " + (missing.size() + empty.size()) + " model ids.";
+            rebuildHome();
+        }));
+
+        appendByNamespace(rows, "NOT SHIPPED BY ANY ENABLED PACK", missing);
+        appendByNamespace(rows, "PRESENT BUT DRAWING NOTHING", empty);
+        healthRows = List.copyOf(rows);
+    }
+
+    /**
+     * Lists ids under their namespace, a few at a time.
+     *
+     * <p>Capped per namespace. The honest version of a page about 543 broken
+     * models is not 543 rows nobody scrolls: it is the count, the first
+     * handful so the shape is recognisable, and a button that copies all of
+     * them for whoever is going to actually fix them.</p>
+     */
+    private void appendByNamespace(List<HomeRow> rows, String heading, List<String> ids) {
+        if (ids.isEmpty()) {
+            return;
+        }
+        java.util.Map<String, List<String>> byNamespace = new java.util.LinkedHashMap<>();
+        for (String id : ids) {
+            int colon = id.indexOf(':');
+            String namespace = colon > 0 ? id.substring(0, colon) : "(none)";
+            byNamespace.computeIfAbsent(namespace, key -> new ArrayList<>()).add(id);
+        }
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow(heading, 0, true));
+        for (java.util.Map.Entry<String, List<String>> entry : byNamespace.entrySet()) {
+            List<String> found = entry.getValue();
+            rows.add(new HomeRow(entry.getKey() + " - " + found.size(),
+                    GuiTheme.TEXT_BRIGHT, false));
+            int shown = Math.min(SHOWN_PER_NAMESPACE, found.size());
+            for (int i = 0; i < shown; i++) {
+                rows.add(new HomeRow("    " + found.get(i), GuiTheme.TEXT_MUTED, false));
+            }
+            if (found.size() > shown) {
+                rows.add(new HomeRow("    ... and " + (found.size() - shown) + " more",
+                        GuiTheme.TEXT_MUTED, false));
+            }
+        }
+    }
+
+    /** How many ids are listed per namespace before the count stands in. */
+    private static final int SHOWN_PER_NAMESPACE = 8;
+
     private void rebuildHome() {
         ScanReport report = index.report();
         List<HomeRow> rows = new ArrayList<>();
@@ -2259,7 +2538,14 @@ public final class CatalogueScreen extends Screen {
         // is irrelevant when nothing is being written.
         String reason;
         int reasonColour;
-        if (tab == Tab.HOME) {
+        if (tab == Tab.SETTINGS) {
+            reason = "Click a setting to change it. Every one is saved as you go.";
+            reasonColour = GuiTheme.TEXT_MUTED;
+        } else if (tab == Tab.HEALTH) {
+            reason = "Models the definitions ask for that no enabled pack ships.   "
+                    + "R rescan";
+            reasonColour = GuiTheme.TEXT_MUTED;
+        } else if (tab == Tab.HOME) {
             reason = "What the packs contain and what is wrong with them.   "
                     + "R rescan";
             reasonColour = GuiTheme.TEXT_DIM;
@@ -2878,7 +3164,7 @@ public final class CatalogueScreen extends Screen {
                     menuScroll - (int) Math.signum(deltaY)));
             return true;
         }
-        if (deltaY != 0 && tab == Tab.HOME) {
+        if (deltaY != 0 && prose()) {
             int visibleHeight = this.height - FOOTER_H - 4 - gridTop();
             int most = Math.max(0, homeContentHeight - visibleHeight);
             homeScroll = Math.max(0, Math.min(most,

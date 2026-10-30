@@ -320,6 +320,15 @@ public final class CmvConfig {
     public boolean debugResolution = false;
 
     /**
+     * Whether the pack-health page is offered in the sidebar.
+     *
+     * <p>Off, because it is not a page a player can act on: it lists models
+     * their packs do not ship, which is somebody else's bug. Whoever built the
+     * pack can act on it, and they are the one who will turn this on.</p>
+     */
+    public boolean packHealth = false;
+
+    /**
      * Packs the scanner is to leave alone, by pack id — {@code vanilla},
      * {@code file/Some Pack.zip}.
      *

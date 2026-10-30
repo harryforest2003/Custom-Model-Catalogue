@@ -13,6 +13,9 @@
   "entrypoints": {
     "client": [
       "dev.custommodels.cmv.core.CmvMod"
+    ],
+    "modmenu": [
+      "dev.custommodels.cmv.core.ModMenuHook"
     ]
   },
   "depends": {

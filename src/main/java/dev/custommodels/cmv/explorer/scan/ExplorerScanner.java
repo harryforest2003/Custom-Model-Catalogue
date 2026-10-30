@@ -243,6 +243,10 @@ public final class ExplorerScanner {
                     builder.groupedStates(),
                     builder.heuristicGroupsFormed(),
                     builder.skippedVanilla());
+            // Diagnostics for the pack-health page, gathered whether or not
+            // the broken ones were dropped from the grid.
+            report.setBroken(builder.missingModels(), builder.emptyModels(),
+                    builder.skippedBroken());
             for (LogicalModel model : models) {
                 for (String warning : model.warnings()) {
                     report.addWarning(model.displayName() + " — " + warning);
