@@ -45,6 +45,60 @@ public record ExplorerQuery(String text,
                             boolean onlyWithWarnings,
                             boolean onlyRealItems) {
 
+    /**
+     * The models that look like a given one, that one first.
+     *
+     * <p>Two hashes are already worked out for every model during the scan,
+     * because collapsing duplicates needs them: one over the geometry and one
+     * over the set of textures. Sharing either is what "looks like this"
+     * means, and the two kinds of match are different and both wanted — same
+     * geometry with different textures is a recolour of one thing, and same
+     * textures with different geometry is a family built from one sheet.</p>
+     *
+     * <p>An empty hash matches nothing, not everything. A model with no
+     * geometry or no textures has one, and treating absence as a value would
+     * have every broken model in a pack claim to look like every other.</p>
+     *
+     * <p>The subject leads the list rather than being left out of it. The
+     * question is nearly always "which of these did I mean", and that is
+     * answered by seeing it beside the others, not instead of them.</p>
+     *
+     * <p>Ids are the default state's model id, which is what the grid
+     * restricts itself on and what a saved set holds. {@code canonicalId} is
+     * the stabler identity and the wrong one here: nothing else keys a visible
+     * list on it.</p>
+     */
+    public static java.util.Set<String> alike(java.util.List<LogicalModel> all,
+                                              LogicalModel subject) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (subject == null) {
+            return out;
+        }
+        String id = subject.defaultState().modelId();
+        out.add(id);
+        if (all == null) {
+            return out;
+        }
+        String geometry = subject.geometryHash() == null ? "" : subject.geometryHash();
+        String textures = subject.textureHash() == null ? "" : subject.textureHash();
+        if (geometry.isEmpty() && textures.isEmpty()) {
+            return out;
+        }
+        for (LogicalModel model : all) {
+            if (model == null || model.defaultState().modelId().equals(id)) {
+                continue;
+            }
+            if (!geometry.isEmpty() && geometry.equals(model.geometryHash())) {
+                out.add(model.defaultState().modelId());
+                continue;
+            }
+            if (!textures.isEmpty() && textures.equals(model.textureHash())) {
+                out.add(model.defaultState().modelId());
+            }
+        }
+        return out;
+    }
+
     /** Filter on how many appearances an item has. */
     public enum StateFilter {
         ANY("Any"),

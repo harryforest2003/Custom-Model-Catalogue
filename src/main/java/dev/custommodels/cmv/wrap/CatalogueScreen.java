@@ -217,6 +217,17 @@ public final class CatalogueScreen extends Screen {
             dev.custommodels.cmv.collection.SkinSets.get();
     /** The set whose members the grid is showing, or null for everything. */
     private dev.custommodels.cmv.collection.SkinSets.Set openSet;
+
+    /**
+     * Model ids the grid is pinned to while showing look-alikes, or null.
+     *
+     * <p>Not saved and not a list the player made: it is one question asked of
+     * one model, and it lasts as long as the screen that asked it.</p>
+     */
+    private java.util.Set<String> lookAlike;
+
+    /** The model the look-alikes are of, for the bar that says so. */
+    private String lookAlikeOf = "";
     /** True when the grid is showing the favourites rather than a set. */
     private boolean openFavourites;
     /**
@@ -341,6 +352,22 @@ public final class CatalogueScreen extends Screen {
         CatalogueScreen screen = new CatalogueScreen();
         screen.tab = Tab.CATALOGUE;
         screen.pendingSearch = search;
+        return screen;
+    }
+
+    /**
+     * Opens on the grid, showing only what looks like one model.
+     *
+     * <p>Reached from a card rather than from here, and built as a new screen
+     * rather than by reaching back into the one underneath: the same way a
+     * command opens a search. See {@link ExplorerQuery#alike}.</p>
+     */
+    public static CatalogueScreen lookingLike(LogicalModel model) {
+        CatalogueScreen screen = new CatalogueScreen();
+        screen.tab = Tab.CATALOGUE;
+        screen.lookAlike = ExplorerQuery.alike(
+                ExplorerIndex.get().browsable(), model);
+        screen.lookAlikeOf = model == null ? "" : model.displayName();
         return screen;
     }
 
@@ -1192,7 +1219,9 @@ public final class CatalogueScreen extends Screen {
             drawSetsList(graphics, mouseX, mouseY);
             return;
         }
-        if (openSet != null || openFavourites) {
+        if (lookAlike != null) {
+            drawLookAlikeBar(graphics, mouseX, mouseY);
+        } else if (openSet != null || openFavourites) {
             drawOpenSetBar(graphics, mouseX, mouseY);
         }
         if (!applying) {
@@ -1786,6 +1815,37 @@ public final class CatalogueScreen extends Screen {
      * happened to match four things, which is the sort of quiet state that
      * makes an interface feel broken.</p>
      */
+    /**
+     * Says what the grid has been narrowed to, and offers the way out.
+     *
+     * <p>Its own bar rather than the set bar's, because the way out is
+     * different: a set goes back to the list of sets, and this goes back to
+     * everything.</p>
+     */
+    private void drawLookAlikeBar(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        int left = sidebarWidth() + PAD;
+        int y = gridTop() - 18;
+        String back = "\u2039 Show everything";
+        int backWidth = this.font.width(back) + 12;
+        boolean hover = inside(mouseX, mouseY, left, y, backWidth, 15);
+        GuiTheme.chip(graphics, left, y, backWidth, 15, false, hover);
+        GuiTheme.text(graphics, this.font, back, left + 6, y + 4,
+                hover ? GuiTheme.TEXT_HEADING : GuiTheme.TEXT_DIM, false);
+        hits.add(new Hit(left, y, backWidth, 15, () -> {
+            lookAlike = null;
+            lookAlikeOf = "";
+            page = 0;
+            rebuild();
+        }));
+        int count = lookAlike.size() - 1;
+        String said = count <= 0
+                ? "Nothing else looks like " + lookAlikeOf
+                : count + (count == 1 ? " other looks" : " others look")
+                        + " like " + lookAlikeOf;
+        GuiTheme.text(graphics, this.font, said, left + backWidth + 8, y + 4,
+                GuiTheme.TEXT_MUTED, false);
+    }
+
     private void drawOpenSetBar(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
         int left = sidebarWidth() + PAD;
         int y = gridTop() - 18;
@@ -2091,6 +2151,9 @@ public final class CatalogueScreen extends Screen {
         if (collecting) {
             // Everything, so there is something to add from.
             return null;
+        }
+        if (lookAlike != null) {
+            return lookAlike;
         }
         if (openFavourites) {
             return new java.util.LinkedHashSet<>(sets.favourites());

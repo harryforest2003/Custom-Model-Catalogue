@@ -75,6 +75,7 @@ public final class ExplorerTest {
         searchTests();
         renderTests();
         textureNamespaceTests();
+        whatLooksLikeThis();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -2172,6 +2173,83 @@ public final class ExplorerTest {
         return incomplete.isEmpty()
                 && builder.unavailableTextures().contains("p:straight_at_it")
                 && !new MeshBuilder(source, new HashMap<>(), resolver).build(direct).isEmpty();
+    }
+
+    /**
+     * Which models the card offers as looking like the open one.
+     *
+     * <p>Sharing either hash counts, and the two matches mean different
+     * things: same geometry with another texture is a recolour of one thing,
+     * same texture over other geometry is a family cut from one sheet. The
+     * case that matters most is the one that would be silent — an empty hash
+     * matching an empty hash would have every model with no geometry claim to
+     * look like every other.</p>
+     */
+    private static void whatLooksLikeThis() {
+        header("Look-alikes");
+
+        MemorySource source = new MemorySource();
+        // Two shapes and two textures, every combination of the two. The
+        // geometry is written out rather than inherited from a vanilla parent,
+        // so the hashes being compared are the ones this sets up.
+        String cube = "[{\"from\":[0,0,0],\"to\":[16,16,16],\"faces\":{"
+                + "\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#all\"}}}]";
+        String slab = "[{\"from\":[0,0,0],\"to\":[16,8,16],\"faces\":{"
+                + "\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#all\"}}}]";
+        source.model("p:item/sword_blue",
+                "{\"elements\":" + cube + ",\"textures\":{\"all\":\"p:blue\"}}");
+        source.model("p:item/sword_red",
+                "{\"elements\":" + cube + ",\"textures\":{\"all\":\"p:red\"}}");
+        source.model("p:item/hat_blue",
+                "{\"elements\":" + slab + ",\"textures\":{\"all\":\"p:blue\"}}");
+        source.model("p:item/hat_red",
+                "{\"elements\":" + slab + ",\"textures\":{\"all\":\"p:red\"}}");
+        source.texture("p:blue", 16, 16);
+        source.texture("p:red", 16, 16);
+
+        List<LogicalModel> models = build(source, "minecraft:diamond_sword", """
+                {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
+                  "cases":[
+                    {"when":"sb","model":{"type":"minecraft:model","model":"p:item/sword_blue"}},
+                    {"when":"sr","model":{"type":"minecraft:model","model":"p:item/sword_red"}},
+                    {"when":"hb","model":{"type":"minecraft:model","model":"p:item/hat_blue"}},
+                    {"when":"hr","model":{"type":"minecraft:model","model":"p:item/hat_red"}}]}}
+                """);
+        check("the four are distinct cards", models.size() == 4);
+
+        LogicalModel swordBlue = models.stream()
+                .filter(m -> m.defaultState().modelId().endsWith("sword_blue"))
+                .findFirst().orElseThrow();
+        java.util.Set<String> like = ExplorerQuery.alike(models, swordBlue);
+
+        check("the model asked about leads its own list",
+                like.iterator().next().equals(swordBlue.defaultState().modelId()));
+        check("the same shape in another colour is a look-alike",
+                like.stream().anyMatch(id -> id.endsWith("sword_red")));
+        check("so is the same colour on another shape",
+                like.stream().anyMatch(id -> id.endsWith("hat_blue")));
+        check("but not the one sharing neither",
+                like.stream().noneMatch(id -> id.endsWith("hat_red")));
+        check("which is three of the four", like.size() == 3);
+
+        // The failure that would be silent: nothing to compare is not a match.
+        MemorySource bare = new MemorySource();
+        bare.model("p:item/nothing_a", "{}");
+        bare.model("p:item/nothing_b", "{}");
+        List<LogicalModel> empties = build(bare, "minecraft:paper", """
+                {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
+                  "cases":[
+                    {"when":"a","model":{"type":"minecraft:model","model":"p:item/nothing_a"}},
+                    {"when":"b","model":{"type":"minecraft:model","model":"p:item/nothing_b"}}]}}
+                """);
+        check("a model with nothing to compare matches only itself",
+                empties.isEmpty()
+                        || ExplorerQuery.alike(empties, empties.get(0)).size() == 1);
+
+        check("nothing asked about is an empty answer",
+                ExplorerQuery.alike(models, null).isEmpty());
+        check("and no index to search leaves just the subject",
+                ExplorerQuery.alike(null, swordBlue).size() == 1);
     }
 
     private static List<LogicalModel> build(MemorySource source, String item, String json) {

@@ -797,7 +797,8 @@ public final class DetailScreen extends Screen {
                 new Control("Reset view", this::resetView),
                 new Control("Copy image", this::copyImage),
                 new Control("Save image", this::saveImage),
-                new Control("Animated preview", this::exportAnimation)));
+                new Control("Animated preview", this::exportAnimation),
+                new Control("Find similar", this::findSimilar)));
         return made;
     }
 
@@ -1122,6 +1123,18 @@ public final class DetailScreen extends Screen {
         }
         return where == EquipmentSlot.OFFHAND
                 ? said + "  (the model asks for it)" : said;
+    }
+
+    /**
+     * Shows the grid narrowed to the models that look like this one.
+     *
+     * <p>Both hashes it compares are worked out during the scan for collapsing
+     * duplicates, so this costs one pass over the index and nothing else. See
+     * {@link dev.custommodels.cmv.explorer.graph.ExplorerQuery#alike}.</p>
+     */
+    private void findSimilar() {
+        McCompat.setScreen(
+                dev.custommodels.cmv.wrap.CatalogueScreen.lookingLike(model));
     }
 
     private void resetView() {

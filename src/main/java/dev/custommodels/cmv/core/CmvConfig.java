@@ -376,15 +376,6 @@ public final class CmvConfig {
     public boolean restoreVanillaInterface = true;
 
     /**
-     * Whether a skinned item's tooltip is headed with the skin's name.
-     *
-     * <p>On, because the question a player has when hovering a skinned item is
-     * which skin it is. Off for anyone who would rather their tooltips were
-     * exactly what the game shipped.</p>
-     */
-    public boolean skinTooltip = true;
-
-    /**
      * Whether a worn model is drawn as its model on the figure's head.
      *
      * <p>On, because a model meant for the head is otherwise invisible in the
