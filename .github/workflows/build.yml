@@ -56,6 +56,9 @@ jobs:
           A catalogue of the custom item models in your resource packs. It
           applies nothing to your items and is invisible to servers.
 
+          Licensed under the GNU GPL v3 or later, with an additional
+          permission for linking with Minecraft and its mod loaders.
+
           **Download the `+26.2` jar** unless you are specifically on 1.21.11.
 
           | Jar | Minecraft |
