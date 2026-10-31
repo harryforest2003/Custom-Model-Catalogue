@@ -2247,13 +2247,22 @@ public final class ExplorerTest {
         header("Look-alikes");
 
         MemorySource source = new MemorySource();
-        // Two shapes and two textures, every combination of the two. The
-        // geometry is written out rather than inherited from a vanilla parent,
-        // so the hashes being compared are the ones this sets up.
+        // Two shapes and two textures, every combination of the two, and one
+        // model built quite differently. The geometry is written out rather
+        // than inherited from a vanilla parent, so the hashes being compared
+        // are the ones this sets up.
         String cube = "[{\"from\":[0,0,0],\"to\":[16,16,16],\"faces\":{"
                 + "\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#all\"}}}]";
         String slab = "[{\"from\":[0,0,0],\"to\":[16,8,16],\"faces\":{"
                 + "\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#all\"}}}]";
+        StringBuilder many = new StringBuilder("[");
+        for (int i = 0; i < 6; i++) {
+            many.append(i == 0 ? "" : ",")
+                    .append("{\"from\":[0,").append(i * 2).append(",0],\"to\":[16,")
+                    .append(i * 2 + 2).append(",16],\"faces\":{\"north\":{")
+                    .append("\"uv\":[0,0,16,16],\"texture\":\"#all\"}}}");
+        }
+        many.append("]");
         source.model("p:item/sword_blue",
                 "{\"elements\":" + cube + ",\"textures\":{\"all\":\"p:blue\"}}");
         source.model("p:item/sword_red",
@@ -2262,8 +2271,11 @@ public final class ExplorerTest {
                 "{\"elements\":" + slab + ",\"textures\":{\"all\":\"p:blue\"}}");
         source.model("p:item/hat_red",
                 "{\"elements\":" + slab + ",\"textures\":{\"all\":\"p:red\"}}");
+        source.model("p:item/tower",
+                "{\"elements\":" + many + ",\"textures\":{\"all\":\"p:green\"}}");
         source.texture("p:blue", 16, 16);
         source.texture("p:red", 16, 16);
+        source.texture("p:green", 16, 16);
 
         List<LogicalModel> models = build(source, "minecraft:diamond_sword", """
                 {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
@@ -2271,9 +2283,10 @@ public final class ExplorerTest {
                     {"when":"sb","model":{"type":"minecraft:model","model":"p:item/sword_blue"}},
                     {"when":"sr","model":{"type":"minecraft:model","model":"p:item/sword_red"}},
                     {"when":"hb","model":{"type":"minecraft:model","model":"p:item/hat_blue"}},
-                    {"when":"hr","model":{"type":"minecraft:model","model":"p:item/hat_red"}}]}}
+                    {"when":"hr","model":{"type":"minecraft:model","model":"p:item/hat_red"}},
+                    {"when":"tw","model":{"type":"minecraft:model","model":"p:item/tower"}}]}}
                 """);
-        check("the four are distinct cards", models.size() == 4);
+        check("the five are distinct cards", models.size() == 5);
 
         LogicalModel swordBlue = models.stream()
                 .filter(m -> m.defaultState().modelId().endsWith("sword_blue"))
@@ -2286,9 +2299,33 @@ public final class ExplorerTest {
                 like.stream().anyMatch(id -> id.endsWith("sword_red")));
         check("so is the same colour on another shape",
                 like.stream().anyMatch(id -> id.endsWith("hat_blue")));
-        check("but not the one sharing neither",
-                like.stream().noneMatch(id -> id.endsWith("hat_red")));
-        check("which is three of the four", like.size() == 3);
+        // The whole point of the looser tiers. Sharing neither hash used to be
+        // a reason to be left out, which made this a recolour-finder.
+        check("and so is one built the same way, sharing neither",
+                like.stream().anyMatch(id -> id.endsWith("hat_red")));
+        check("but not one built quite differently",
+                like.stream().noneMatch(id -> id.endsWith("tower")));
+
+        // Order carries the confidence: the tiers are the answer's ranking, so
+        // an exact match must not be buried among the guesses.
+        java.util.List<String> ordered = new java.util.ArrayList<>(like);
+        int exact = -1;
+        int loose = -1;
+        for (int i = 0; i < ordered.size(); i++) {
+            if (ordered.get(i).endsWith("sword_red")) {
+                exact = i;
+            }
+            if (ordered.get(i).endsWith("hat_red")) {
+                loose = i;
+            }
+        }
+        check("the exact match is offered before the loose one",
+                exact > 0 && loose > exact);
+
+        // A vanilla parent must not count as a template, or every generated
+        // sprite in the game would be a relative of every other.
+        check("a vanilla parent is not a template",
+                ExplorerQuery.templateOf(swordBlue).isEmpty());
 
         // The failure that would be silent: nothing to compare is not a match.
         MemorySource bare = new MemorySource();

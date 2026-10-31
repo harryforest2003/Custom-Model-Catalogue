@@ -11,6 +11,7 @@ import dev.custommodels.cmv.explorer.graph.ResolvedName;
 import dev.custommodels.cmv.explorer.render.PreviewService;
 import dev.custommodels.cmv.explorer.scan.ExplorerIndex;
 import dev.custommodels.cmv.explorer.scan.ScanReport;
+import dev.custommodels.cmv.explorer.scan.SkinColours;
 import dev.custommodels.cmv.explorer.ui.DetailScreen;
 import dev.custommodels.cmv.gui.GuiTheme;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -241,7 +242,7 @@ public final class CatalogueScreen extends Screen {
      * the grid right now ("where are the red ones"), not a way the player
      * wants the mod to behave from here on.</p>
      */
-    private dev.custommodels.cmv.explorer.scan.SkinColours.Family colourFilter = dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY;
+    private SkinColours.Family colourFilter = SkinColours.Family.ANY;
 
     /** True while the colour pass is still reading textures for this filter. */
     private boolean colourWaiting;
@@ -536,6 +537,11 @@ public final class CatalogueScreen extends Screen {
         rebuildHome();
         rebuildSettings();
         rebuildHealth();
+        // Started as soon as there is a grid rather than when somebody first
+        // picks a colour, so by the time they do the answer is usually already
+        // there. It costs nothing to call twice: the pass knows which list of
+        // models it was built from and returns at once for that one.
+        beginColourPass();
         packs = ExplorerQuery.packsOf(index.browsable());
         if (!packFilter.isEmpty() && !packs.contains(packFilter)) {
             // The pack it was set to is no longer loaded.
@@ -562,7 +568,7 @@ public final class CatalogueScreen extends Screen {
             browseModels = ExplorerQuery.sort(index.view(browseQuery), order);
             browseModels = keepMembers(browseModels,
                     model -> model.defaultState().modelId());
-            browseModels = dev.custommodels.cmv.explorer.scan.SkinColours.keep(browseModels, colourFilter, model -> model);
+            browseModels = SkinColours.keep(browseModels, colourFilter, model -> model);
             typeCounts = index.counts();
             visible = List.of();
             clampPage();
@@ -587,7 +593,7 @@ public final class CatalogueScreen extends Screen {
         }
 
         base = keepMembers(base, target -> target.model().defaultState().modelId());
-        base = dev.custommodels.cmv.explorer.scan.SkinColours.keep(base, colourFilter, WrapTarget::model);
+        base = SkinColours.keep(base, colourFilter, WrapTarget::model);
         typeCounts = catalogue.countsByType(base);
         browseModels = List.of();
         visible = WrapCatalogue.sort(
@@ -719,7 +725,7 @@ public final class CatalogueScreen extends Screen {
         // since both are worked out from here.
         return HEADER_H + filterHeight()
                 + (showsItemStrip() ? ITEM_STRIP_H : 0) + 4
-                + (inSet() && !prose() ? 18 : 0);
+                + ((inSet() || lookAlike != null) && !prose() ? 18 : 0);
     }
 
     private int gridBottom() {
@@ -877,16 +883,38 @@ public final class CatalogueScreen extends Screen {
      * because a sidebar of nothing but tabs is not the one to aim for.</p>
      */
     private int navRowHeight() {
-        int count = Tab.values().length;
-        int available = this.height - FOOTER_H - (HEADER_H + 6) - CATEGORY_RESERVE;
-        if (count * NAV_ROW_H <= available) {
+        int rows = Math.max(1, navRowCount());
+        int available = this.height - FOOTER_H - (HEADER_H + 6) - CATEGORY_HEADING_H;
+        if (rows * NAV_ROW_H <= available) {
             return NAV_ROW_H;
         }
-        return Math.max(NAV_ROW_MIN, available / Math.max(1, count));
+        return Math.max(NAV_ROW_MIN, available / rows);
     }
 
-    /** The space the category heading and a couple of categories want. */
-    private static final int CATEGORY_RESERVE = 46;
+    /**
+     * How many rows the sidebar is about to draw, tabs and categories together.
+     *
+     * <p>Counted, and counted the way the category loop itself decides what to
+     * draw, or the height worked out from it would be the height for a
+     * different sidebar. Reserving a fixed space for "a couple of categories"
+     * was the first attempt and was wrong: there are twenty of them, the loop
+     * below simply stopped when it ran out of room, and six were silently
+     * missing with Food the last one anybody saw.</p>
+     */
+    private int navRowCount() {
+        int rows = Tab.values().length;
+        for (ItemType type : ItemType.tabOrder()) {
+            int count = typeCounts.getOrDefault(type, 0);
+            if (count == 0 && type != ItemType.ALL && type != category) {
+                continue;
+            }
+            rows++;
+        }
+        return rows;
+    }
+
+    /** What the CATEGORY heading and the rule under it cost. */
+    private static final int CATEGORY_HEADING_H = 22;
     /** Below this a row is not smaller, it is unreadable. */
     private static final int NAV_ROW_MIN = 12;
 
@@ -927,7 +955,9 @@ public final class CatalogueScreen extends Screen {
         y += 16;
 
         for (ItemType type : ItemType.tabOrder()) {
-            if (y + NAV_ROW_H > this.height - FOOTER_H) {
+            if (y + navRow > this.height - FOOTER_H) {
+                // Still a backstop, but navRowHeight() counts these in now, so
+                // reaching it means even the floor would not fit.
                 break;
             }
             int count = typeCounts.getOrDefault(type, 0);
@@ -935,17 +965,17 @@ public final class CatalogueScreen extends Screen {
                 continue;
             }
             boolean selected = category == type;
-            boolean hover = inside(mouseX, mouseY, 0, y, sidebarWidth(), NAV_ROW_H);
-            GuiTheme.navItem(graphics, this.font, 0, y, sidebarWidth(), NAV_ROW_H,
+            boolean hover = inside(mouseX, mouseY, 0, y, sidebarWidth(), navRow);
+            GuiTheme.navItem(graphics, this.font, 0, y, sidebarWidth(), navRow,
                     type.displayName(), count > 0 ? String.valueOf(count) : "",
                     selected, hover, count > 0 || type == ItemType.ALL);
             final ItemType target = type;
-            navHits.add(new Hit(0, y, sidebarWidth(), NAV_ROW_H, () -> {
+            navHits.add(new Hit(0, y, sidebarWidth(), navRow, () -> {
                 category = target;
                 page = 0;
                 rebuild();
             }));
-            y += NAV_ROW_H;
+            y += navRow;
         }
     }
 
@@ -1036,8 +1066,8 @@ public final class CatalogueScreen extends Screen {
         // Offered on both grids: what colour a model is, is a fact about the
         // model, and is as good a way to find a wrap to apply as to find one
         // to look at.
-        chips.add(new String[]{colourChipLabel(),
-                colourFilter == dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY ? "0" : "1"});
+        chips.add(new String[]{colourChipText,
+                colourFilter == SkinColours.Family.ANY ? "0" : "1"});
         if (category != ItemType.ALL) {
             chips.add(new String[]{"Category: " + category.displayName(), "1"});
         }
@@ -1146,28 +1176,44 @@ public final class CatalogueScreen extends Screen {
             final int chipX = x;
             final int chipY = y;
             hits.add(new Hit(x, y, width, 16, () -> {
-                CmvConfig config = CmvConfig.get();
                 // The category chip only exists when a category is selected, so
                 // the indices after it shift. Resolving by label keeps the
                 // handler honest rather than depending on that arithmetic.
                 String chosen = chipLabels.get(which);
+                // Every filter chip opens the same searchable menu, and none of
+                // them changes the grid by being opened, so each returns rather
+                // than falling through to the rebuild below.
                 if (chosen.startsWith("Compatible") || chosen.startsWith("All wraps")) {
-                    compatibleOnly = !compatibleOnly;
-                } else if (chosen.startsWith("Order:")) {
-                    order = order.next();
-                } else if (chosen.startsWith("Pack:")) {
-                    packFilter = cycle(packs, packFilter);
-                } else if (chosen.startsWith("Set:")) {
+                    openCompatibleMenu(chipX, chipY + 18);
+                    return;
+                }
+                if (chosen.startsWith("Order:")) {
+                    openOrderMenu(chipX, chipY + 18);
+                    return;
+                }
+                if (chosen.startsWith("Pack:")) {
+                    openPackMenu(chipX, chipY + 18);
+                    return;
+                }
+                if (chosen.startsWith("Set:")) {
                     openSetFilterMenu(chipX, chipY + 18);
-                } else if (chosen.startsWith("Category:")) {
-                    category = ItemType.ALL;
-                } else if (chosen.startsWith("View:")) {
-                    config.setDensity(config.density().next());
-                } else if (chosen.startsWith("Colour:")) {
-                    colourFilter = colourFilter.next();
-                    beginColourPass();
-                } else if (chosen.startsWith("States:")) {
-                    browseQuery = browseQuery.withStates(browseQuery.states().next());
+                    return;
+                }
+                if (chosen.startsWith("Category:")) {
+                    openCategoryMenu(chipX, chipY + 18);
+                    return;
+                }
+                if (chosen.startsWith("View:")) {
+                    openDensityMenu(chipX, chipY + 18);
+                    return;
+                }
+                if (chosen.startsWith("Colour:")) {
+                    openColourMenu(chipX, chipY + 18);
+                    return;
+                }
+                if (chosen.startsWith("States:")) {
+                    openStatesMenu(chipX, chipY + 18);
+                    return;
                 }
                 page = 0;
                 rebuild();
@@ -1178,31 +1224,145 @@ public final class CatalogueScreen extends Screen {
     }
 
     /**
-     * What the colour chip says: the colour, or how far off knowing it is.
+     * What the colour chip says, worked out when it changes.
      *
-     * <p>Nothing in the scan reads a pixel, so the first time a colour is
-     * asked for there is a pass to run. Saying so beats a chip that looks like
-     * it did nothing, which is what an empty grid would look like.</p>
+     * <p>Not while drawing. The chips are rebuilt every frame, and this one
+     * reports the progress of a pass that takes a few seconds, so building the
+     * sentence where it is shown meant joining strings sixty times a second to
+     * say a number that changes twenty times in total.</p>
      */
-    private String colourChipLabel() {
-        dev.custommodels.cmv.explorer.scan.SkinColours.Family want = colourFilter;
-        if (want == dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY) {
-            return "Colour: any";
+    private String colourChipText = "Colour: any";
+
+    private void refreshColourChip() {
+        if (colourFilter == SkinColours.Family.ANY) {
+            colourChipText = "Colour: any";
+        } else if (!SkinColours.ready(index.browsable())) {
+            colourChipText = "Colour: reading textures " + SkinColours.percent() + "%";
+        } else {
+            colourChipText = "Colour: "
+                    + colourFilter.displayName().toLowerCase(Locale.ROOT);
         }
-        if (!dev.custommodels.cmv.explorer.scan.SkinColours.ready(index.browsable())) {
-            return "Colour: reading textures " + dev.custommodels.cmv.explorer.scan.SkinColours.percent() + "%";
-        }
-        return "Colour: " + want.displayName().toLowerCase(Locale.ROOT);
     }
 
-    /** Starts the colour pass, unless there is nothing to ask it for. */
+    /**
+     * Starts the colour pass, if it has not run for this grid already.
+     *
+     * <p>Called when the grid is built rather than when a colour is chosen.
+     * Working the colours out takes a few seconds on a large pack, and the
+     * moment somebody clicks the chip is the worst time to begin, because that
+     * is the moment they are waiting. Begun with the grid, it is normally
+     * finished before anybody asks.</p>
+     */
     private void beginColourPass() {
-        if (colourFilter == dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY) {
-            colourWaiting = false;
-            return;
+        SkinColours.begin(index.browsable(), index.source());
+        colourWaiting = !SkinColours.ready(index.browsable());
+        refreshColourChip();
+    }
+
+    /**
+     * The filter menus: one shape for every chip on the row.
+     *
+     * <p>They used to cycle on click, which is fine for two values and useless
+     * for thirteen \u2014 cycling is not choosing, and the colour chip made that
+     * plain. The set chip already opened a menu that filters and scrolls, so
+     * the others open the same one. Every chip behaving the same way is worth
+     * more than saving a click on the short lists.</p>
+     */
+    private void openOrderMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        for (WrapCatalogue.Order value : WrapCatalogue.Order.values()) {
+            final WrapCatalogue.Order target = value;
+            rows.add(new MenuRow(value.label(), order == value, () -> {
+                order = target;
+                page = 0;
+            }));
         }
-        dev.custommodels.cmv.explorer.scan.SkinColours.begin(index.browsable(), index.source());
-        colourWaiting = !dev.custommodels.cmv.explorer.scan.SkinColours.ready(index.browsable());
+        openMenu("Sort by", rows, "", null, x, y);
+    }
+
+    private void openPackMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        rows.add(new MenuRow("All packs", packFilter.isEmpty(), () -> {
+            packFilter = "";
+            page = 0;
+        }));
+        for (String pack : packs) {
+            final String target = pack;
+            rows.add(new MenuRow(shortPack(pack), pack.equals(packFilter), () -> {
+                packFilter = target;
+                page = 0;
+            }));
+        }
+        openMenu("Filter by pack", rows, "", null, x, y);
+    }
+
+    private void openColourMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        for (SkinColours.Family value : SkinColours.Family.values()) {
+            final SkinColours.Family target = value;
+            rows.add(new MenuRow(
+                    value == SkinColours.Family.ANY ? "Any colour" : value.displayName(),
+                    colourFilter == value, () -> {
+                colourFilter = target;
+                page = 0;
+                beginColourPass();
+            }));
+        }
+        openMenu("Filter by colour", rows, "", null, x, y);
+    }
+
+    private void openStatesMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        for (ExplorerQuery.StateFilter value : ExplorerQuery.StateFilter.values()) {
+            final ExplorerQuery.StateFilter target = value;
+            rows.add(new MenuRow(value.label(), browseQuery.states() == value, () -> {
+                browseQuery = browseQuery.withStates(target);
+                page = 0;
+            }));
+        }
+        openMenu("Filter by states", rows, "", null, x, y);
+    }
+
+    private void openDensityMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        CmvConfig settings = CmvConfig.get();
+        for (CmvConfig.Density value : CmvConfig.Density.values()) {
+            final CmvConfig.Density target = value;
+            rows.add(new MenuRow(value.label(), settings.density() == value,
+                    () -> CmvConfig.get().setDensity(target)));
+        }
+        openMenu("Card size", rows, "", null, x, y);
+    }
+
+    private void openCategoryMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        for (ItemType type : ItemType.tabOrder()) {
+            int count = typeCounts.getOrDefault(type, 0);
+            if (count == 0 && type != ItemType.ALL && type != category) {
+                continue;
+            }
+            final ItemType target = type;
+            rows.add(new MenuRow(count > 0
+                    ? type.displayName() + "   (" + count + ")" : type.displayName(),
+                    category == type, () -> {
+                category = target;
+                page = 0;
+            }));
+        }
+        openMenu("Filter by category", rows, "", null, x, y);
+    }
+
+    private void openCompatibleMenu(int x, int y) {
+        List<MenuRow> rows = new ArrayList<>();
+        rows.add(new MenuRow("Only what fits the held item", compatibleOnly, () -> {
+            compatibleOnly = true;
+            page = 0;
+        }));
+        rows.add(new MenuRow("Every look the packs hold", !compatibleOnly, () -> {
+            compatibleOnly = false;
+            page = 0;
+        }));
+        openMenu("What the grid offers", rows, "", null, x, y);
     }
 
     /** A chip on the row the search box is on. Returns where the next one goes. */
@@ -1718,7 +1878,7 @@ public final class CatalogueScreen extends Screen {
 
         rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("PREVIEWS", 0, true));
-        rows.add(toggle("Animate the cards in the grid", config.animateCards,
+        rows.add(toggle("Play animated textures in the grid", config.animateCards,
                 "on", "off", () -> config.animateCards = !config.animateCards, false));
         rows.add(toggle("Turn the model in the detail view", config.autoRotateDetail,
                 "on", "off", () -> config.autoRotateDetail = !config.autoRotateDetail, false));
@@ -3457,9 +3617,14 @@ public final class CatalogueScreen extends Screen {
         // The colour pass runs on its own thread and finishes whenever it
         // finishes. One rebuild when it does, rather than a rebuild a tick
         // while it works.
-        if (colourWaiting && dev.custommodels.cmv.explorer.scan.SkinColours.ready(index.browsable())) {
-            colourWaiting = false;
-            rebuild();
+        if (colourWaiting) {
+            // The only time the chip's own text changes on its own, so the only
+            // time it is worth rebuilding.
+            refreshColourChip();
+            if (SkinColours.ready(index.browsable())) {
+                colourWaiting = false;
+                rebuild();
+            }
         }
         if (searchPendingSince > 0
                 && System.currentTimeMillis() - searchPendingSince >= SEARCH_SETTLE_MILLIS) {

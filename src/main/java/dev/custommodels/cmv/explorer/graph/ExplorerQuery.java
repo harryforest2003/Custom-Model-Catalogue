@@ -46,14 +46,34 @@ public record ExplorerQuery(String text,
                             boolean onlyRealItems) {
 
     /**
-     * The models that look like a given one, that one first.
+     * The models that look like a given one, closest first.
      *
-     * <p>Two hashes are already worked out for every model during the scan,
-     * because collapsing duplicates needs them: one over the geometry and one
-     * over the set of textures. Sharing either is what "looks like this"
-     * means, and the two kinds of match are different and both wanted — same
-     * geometry with different textures is a recolour of one thing, and same
-     * textures with different geometry is a family built from one sheet.</p>
+     * <p>Four tiers, in this order, because "similar" is not one question. An
+     * exact match on either hash is the strongest answer and used to be the
+     * only one, which made the button a recolour-finder: it found the same
+     * sword in nine colours and missed the sword with a slightly different
+     * guard, which is the one somebody looking for a family wants to see.</p>
+     *
+     * <ol>
+     *   <li><b>The same shape.</b> Identical geometry hash \u2014 the same model
+     *       wearing another texture.</li>
+     *   <li><b>The same textures.</b> Identical texture hash \u2014 one sheet cut
+     *       into a family.</li>
+     *   <li><b>The same template.</b> Both inherit from one of the pack's own
+     *       parent models. This is the tier that answers the question, because
+     *       it is how packs are actually built: a template, and twenty models
+     *       that differ from it in a cuboid or two.</li>
+     *   <li><b>The same build.</b> Same item type, same number of cuboids, same
+     *       number of texture slots. A guess, and last.</li>
+     * </ol>
+     *
+     * <p>Vanilla parents do not count as a template. Every generated item in
+     * the game inherits {@code minecraft:builtin/generated}, so counting it
+     * would make every flat sprite in every pack a relative of every other.
+     * Flat models are left out of the fourth tier for the same reason: a
+     * sprite's shape <em>is</em> its texture, so two sprites with different
+     * textures are different pictures rather than similar shapes, and the
+     * second tier has already caught the ones that share a sheet.</p>
      *
      * <p>An empty hash matches nothing, not everything. A model with no
      * geometry or no textures has one, and treating absence as a value would
@@ -81,24 +101,86 @@ public record ExplorerQuery(String text,
         }
         String geometry = subject.geometryHash() == null ? "" : subject.geometryHash();
         String textures = subject.textureHash() == null ? "" : subject.textureHash();
-        if (geometry.isEmpty() && textures.isEmpty()) {
-            return out;
-        }
+        String template = templateOf(subject);
+
+        java.util.List<String> sameShape = new java.util.ArrayList<>();
+        java.util.List<String> sameTextures = new java.util.ArrayList<>();
+        java.util.List<String> sameTemplate = new java.util.ArrayList<>();
+        java.util.List<String> sameBuild = new java.util.ArrayList<>();
+
         for (LogicalModel model : all) {
-            if (model == null || model.defaultState().modelId().equals(id)) {
+            if (model == null) {
+                continue;
+            }
+            String other = model.defaultState().modelId();
+            if (other.equals(id)) {
                 continue;
             }
             if (!geometry.isEmpty() && geometry.equals(model.geometryHash())) {
-                out.add(model.defaultState().modelId());
-                continue;
-            }
-            if (!textures.isEmpty() && textures.equals(model.textureHash())) {
-                out.add(model.defaultState().modelId());
+                sameShape.add(other);
+            } else if (!textures.isEmpty() && textures.equals(model.textureHash())) {
+                sameTextures.add(other);
+            } else if (!template.isEmpty() && template.equals(templateOf(model))) {
+                sameTemplate.add(other);
+            } else if (sameBuildAs(subject, model)) {
+                sameBuild.add(other);
             }
         }
+        out.addAll(sameShape);
+        out.addAll(sameTextures);
+        out.addAll(sameTemplate);
+        out.addAll(sameBuild);
         return out;
     }
 
+    /**
+     * The pack's own template a model inherits from, or {@code ""} for none.
+     *
+     * <p>The nearest ancestor outside the {@code minecraft} namespace. The
+     * chain holds ancestors only \u2014 not the model itself \u2014 so two models
+     * sharing an answer here really do share a parent.</p>
+     */
+    public static String templateOf(LogicalModel model) {
+        if (model == null) {
+            return "";
+        }
+        for (String parent : model.defaultState().resolved().parentChain()) {
+            if (parent == null || parent.isEmpty()) {
+                continue;
+            }
+            int colon = parent.indexOf(':');
+            String namespace = colon < 0 ? "minecraft" : parent.substring(0, colon);
+            if (!namespace.equals("minecraft")) {
+                return parent;
+            }
+        }
+        return "";
+    }
+
+    /**
+     * The loosest tier: made the same way, on the same kind of item.
+     *
+     * <p>Item type as well as shape, because "twelve cuboids and one texture
+     * slot" on its own is a description of half a pack. With it, the answer to
+     * "what else looks like this sword" is other swords.</p>
+     */
+    public static boolean sameBuildAs(LogicalModel subject, LogicalModel other) {
+        if (subject == null || other == null) {
+            return false;
+        }
+        var mine = subject.defaultState().resolved();
+        var theirs = other.defaultState().resolved();
+        if (mine.generated() || theirs.generated()) {
+            return false;
+        }
+        if (mine.elementCount() <= 0 || mine.elementCount() != theirs.elementCount()) {
+            return false;
+        }
+        if (mine.textureSlots().size() != theirs.textureSlots().size()) {
+            return false;
+        }
+        return subject.type() == other.type();
+    }
     /** Filter on how many appearances an item has. */
     public enum StateFilter {
         ANY("Any"),

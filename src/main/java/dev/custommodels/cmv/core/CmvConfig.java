@@ -59,13 +59,18 @@ public final class CmvConfig {
     public boolean groupByFilename = true;
 
     /**
-     * Slowly rotate the preview on each visible card.
+     * Play a card's animated textures in the grid.
      *
-     * <p>Off by default. A rotation is a strip of pre-rendered angles, so a
-     * spinning card costs a dozen renders where a still costs one. With
-     * previews now rendered at the display's own resolution that turned a grid
-     * of forty cards into several hundred full-size renders, which is what made
-     * half of them appear never to load. The detail view still rotates.</p>
+     * <p>The cards used to turn instead, which was the wrong animation: it cost
+     * a dozen renders for every model whether or not there was anything to see,
+     * and what a pack actually drew was the flame on the sword moving, not the
+     * sword revolving. Now only a model whose textures declare frames earns a
+     * strip, so a grid of forty ordinary models costs forty stills and the ones
+     * that flicker, flicker.</p>
+     *
+     * <p>Still off by default, because a strip is a render per moment and
+     * previews are drawn at the display's own resolution. The detail view
+     * rotates on its own setting.</p>
      */
     public boolean animateCards = false;
 

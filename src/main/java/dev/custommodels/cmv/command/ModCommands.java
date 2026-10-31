@@ -1,13 +1,21 @@
 package dev.custommodels.cmv.command;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import dev.custommodels.cmv.compat.McCompat;
+import dev.custommodels.cmv.explorer.graph.LogicalModel;
+import dev.custommodels.cmv.explorer.scan.ExplorerIndex;
 import dev.custommodels.cmv.core.CmvConfig;
 import dev.custommodels.cmv.wrap.CatalogueScreen;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.ChatFormatting;
+
+import java.util.concurrent.CompletableFuture;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -189,6 +197,7 @@ public final class ModCommands {
                     .requires(FabricClientCommandSource::attended)
                     .executes(context -> openExplorer(null))
                     .then(ClientCommands.argument("search", StringArgumentType.greedyString())
+                            .suggests(ModCommands::suggestScopes)
                             .executes(context -> openExplorer(
                                     StringArgumentType.getString(context, "search")))));
 
@@ -209,6 +218,7 @@ public final class ModCommands {
                             .executes(context -> listPacks())
                             .then(ClientCommands.argument("pack",
                                             StringArgumentType.greedyString())
+                                    .suggests(ModCommands::suggestPacks)
                                     .executes(context -> togglePack(
                                             StringArgumentType.getString(context, "pack")))))
 
@@ -219,6 +229,7 @@ public final class ModCommands {
                             .executes(context -> listNamespaces())
                             .then(ClientCommands.argument("namespace",
                                             StringArgumentType.greedyString())
+                                    .suggests(ModCommands::suggestNamespaces)
                                     .executes(context -> toggleNamespace(
                                             StringArgumentType.getString(context, "namespace")))))
 
@@ -268,6 +279,7 @@ public final class ModCommands {
                                     })))
 
                     .then(ClientCommands.argument("search", StringArgumentType.greedyString())
+                            .suggests(ModCommands::suggestScopes)
                             .executes(context -> openExplorer(
                                     StringArgumentType.getString(context, "search")))));
 
@@ -285,6 +297,62 @@ public final class ModCommands {
         });
     }
 
+
+    /**
+     * The scoped prefixes the search understands, for tab completion.
+     *
+     * <p>Kept beside the commands rather than in the query parser because this
+     * is the list a player is offered, and a scope the parser accepts but
+     * nobody is told about may as well not exist.</p>
+     */
+    private static final java.util.List<String> SEARCH_SCOPES = java.util.List.of(
+            "item:", "model:", "texture:", "ns:", "pack:", "cmd:", "state:",
+            "def:", "type:");
+
+    /**
+     * Completes the word being typed, not the whole phrase.
+     *
+     * <p>A greedy argument's remaining text is everything typed after the
+     * command, so filtering nine prefixes against {@code "katana it"} matches
+     * none of them. Offsetting to the last space is what makes the second term
+     * completable as well as the first.</p>
+     */
+    private static CompletableFuture<Suggestions> suggestScopes(
+            CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+        String typed = builder.getRemaining();
+        int lastSpace = typed.lastIndexOf(' ');
+        SuggestionsBuilder word = lastSpace < 0
+                ? builder
+                : builder.createOffset(builder.getStart() + lastSpace + 1);
+        return SharedSuggestionProvider.suggest(SEARCH_SCOPES, word);
+    }
+
+    /** The packs the scan is reading, by the id the command expects. */
+    private static CompletableFuture<Suggestions> suggestPacks(
+            CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+        return SharedSuggestionProvider.suggest(ExplorerIndex.get().packIds(), builder);
+    }
+
+    /**
+     * Every namespace the packs hold, and the ones already switched off.
+     *
+     * <p>The excluded ones are offered too. They contribute nothing to the
+     * index any more, so without them there would be no way to complete the
+     * name that switches one back on \u2014 which is the moment somebody most
+     * wants the completion.</p>
+     */
+    private static CompletableFuture<Suggestions> suggestNamespaces(
+            CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+        java.util.Set<String> found =
+                new java.util.TreeSet<>(CmvConfig.get().ignoredNamespaces);
+        for (LogicalModel model : ExplorerIndex.get().browsable()) {
+            String namespace = model.namespace();
+            if (namespace != null && !namespace.isEmpty()) {
+                found.add(namespace);
+            }
+        }
+        return SharedSuggestionProvider.suggest(found, builder);
+    }
 
     private static int openExplorer(String search) {
         McCompat.setScreen(CatalogueScreen.browsing(search));

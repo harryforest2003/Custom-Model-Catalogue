@@ -43,12 +43,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       or animation callbacks. The screen calls {@link #beginFrame()} once per
  *       frame and asks for what it is about to draw.</li>
  *   <li>Cards get a cheap still image the moment they scroll into view, and are
- *       promoted to a rotating preview only after they have stayed visible.
- *       Scrolling quickly past a hundred cards therefore costs a hundred still
- *       frames, not a hundred animations.</li>
- *   <li>Rotation is a strip of pre-rendered angles in a single texture. Once
- *       built, spinning a card costs one blit per frame and no rendering at
- *       all.</li>
+ *       promoted to a moving one only after they have stayed visible, and only
+ *       when their textures actually animate. Scrolling quickly past a hundred
+ *       cards therefore costs a hundred still frames.</li>
+ *   <li>An animation is a strip of pre-rendered moments in a single texture.
+ *       Once built, playing a card costs one blit per frame and no rendering
+ *       at all.</li>
  *   <li>Uploads to the GPU are budgeted per frame, because uploading twenty
  *       textures in one frame is exactly the kind of hitch this feature is not
  *       allowed to cause.</li>
@@ -70,16 +70,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class PreviewService {
 
     /**
-     * Angles in a rotation strip.
+     * The most moments a card's animation strip holds.
      *
-     * <p>Reduced from twenty-four. A strip costs this many renders where a
-     * still costs one, and previews are now rendered at display resolution
-     * rather than at 48 pixels, so the old count meant a single card could ask
-     * for more work than the whole grid used to.</p>
+     * <p>A strip costs this many renders where a still costs one, and previews
+     * are rendered at display resolution rather than at 48 pixels, so a high
+     * count means one card can ask for more work than the whole grid used to.
+     * A texture whose cycle is longer than this is sampled across it, so a long
+     * animation skips moments rather than playing slowly \u2014 which is the
+     * right way round for a flame.</p>
      */
-    public static final int SPIN_FRAMES = 12;
+    public static final int CARD_FRAMES = 24;
 
-    /** How long a card must stay visible before it earns a rotation strip. */
+    /** How long a card must stay visible before it earns an animation strip. */
     private static final long PROMOTE_AFTER_MILLIS = 220;
 
     /**
@@ -235,8 +237,15 @@ public final class PreviewService {
      * otherwise be sixty file reads in a single frame.</p>
      */
     private static final int READS_PER_FRAME = 8;
-    private int spinFrame;
-    private long lastSpinAdvance;
+    /**
+     * One shared animation clock, counted in Minecraft ticks.
+     *
+     * <p>Ticks rather than wall-clock frames because a texture's
+     * {@code frameTime} is written in ticks: this is the unit that makes a
+     * four-tick flame flicker at the speed its author chose.</p>
+     */
+    private int animTick;
+    private long lastAnimAdvance;
     private int rendersRequested;
     /**
      * Bumped whenever the visible set changes wholesale, as on a page turn.
@@ -335,16 +344,16 @@ public final class PreviewService {
     // ----------------------------------------------------------- frame cycle
 
     /**
-     * Call once per frame before drawing. Advances the shared spin clock and
-     * spends the frame's upload budget.
+     * Call once per frame before drawing. Advances the shared animation clock
+     * and spends the frame's upload budget.
      */
     public void beginFrame() {
         long now = System.currentTimeMillis();
-        // One shared clock for every rotating preview on screen, rather than a
+        // One shared clock for every animated preview on screen, rather than a
         // timer per card. Cards stay in phase, which also looks better.
-        if (now - lastSpinAdvance >= 70) {
-            lastSpinAdvance = now;
-            spinFrame = (spinFrame + 1) % SPIN_FRAMES;
+        if (now - lastAnimAdvance >= 50) {
+            lastAnimAdvance = now;
+            animTick++;
         }
         uploadsThisFrame = 0;
         readsThisFrame = 0;
@@ -389,13 +398,21 @@ public final class PreviewService {
         String stillKey = key(model, model.defaultStateIndex(), size, false);
         seenThisFrame.add(stillKey);
 
-        if (animate) {
-            String spinKey = key(model, model.defaultStateIndex(), size, true);
-            Identifier spun = textures.get(spinKey);
-            if (spun != null) {
-                seenThisFrame.add(spinKey);
-                float slice = 1.0F / SPIN_FRAMES;
-                return new CardPreview(spun, spinFrame * slice, (spinFrame + 1) * slice);
+        // Only a model whose textures actually move earns a strip. The card
+        // used to turn instead, which cost a dozen renders for every model in
+        // the grid whether or not there was anything to see, and turning is not
+        // what the pack drew. This costs renders only where something moves,
+        // and what it shows is the flame flickering.
+        int period = animate ? animationPeriod(model, model.defaultStateIndex()) : 1;
+        if (period > 1) {
+            String stripKey = key(model, model.defaultStateIndex(), size, true);
+            Identifier strip = textures.get(stripKey);
+            if (strip != null) {
+                seenThisFrame.add(stripKey);
+                int frames = Math.min(period, CARD_FRAMES);
+                int frame = (int) ((long) animTick * frames / period) % frames;
+                float slice = 1.0F / frames;
+                return new CardPreview(strip, frame * slice, (frame + 1) * slice);
             }
             // Ask for the strip only once the card has proved it is staying.
             long since = firstSeen.computeIfAbsent(stillKey, k -> System.currentTimeMillis());
@@ -513,14 +530,14 @@ public final class PreviewService {
 
     // ------------------------------------------------------------ rendering
 
-    private void request(LogicalModel model, int stateIndex, int size, boolean spin,
+    private void request(LogicalModel model, int stateIndex, int size, boolean strip,
                          float yaw, float pitch, float zoom) {
-        request(model, stateIndex, size, spin, yaw, pitch, zoom, 0);
+        request(model, stateIndex, size, strip, yaw, pitch, zoom, 0);
     }
 
-    private void request(LogicalModel model, int stateIndex, int size, boolean spin,
+    private void request(LogicalModel model, int stateIndex, int size, boolean strip,
                          float yaw, float pitch, float zoom, int tick) {
-        String key = spin
+        String key = strip
                 ? key(model, stateIndex, size, true)
                 : (yaw == 0 && pitch == 0 && zoom == 1.0F && tick == 0
                 ? key(model, stateIndex, size, false)
@@ -567,8 +584,8 @@ public final class PreviewService {
                 if (mesh == null || mesh.isEmpty()) {
                     return;
                 }
-                Pixels rendered = spin
-                        ? renderSpin(mesh, resolved, size)
+                Pixels rendered = strip
+                        ? renderAnimation(mesh, resolved, size)
                         : renderStill(mesh, resolved, size, yaw, pitch, zoom, tick);
                 synchronized (uploadQueue) {
                     uploadQueue.add(new Ready(key, rendered));
@@ -597,22 +614,35 @@ public final class PreviewService {
     }
 
     /**
-     * Renders a full turn into one tall image.
+     * Renders one cycle of a model's animated textures into one tall image.
      *
-     * <p>One texture per rotating model rather than one per frame: twenty
-     * spinning cards then cost twenty textures and twenty blits, instead of
-     * nearly five hundred textures and a stream of GPU allocations.</p>
+     * <p>One texture per animated model rather than one per moment: twenty
+     * flickering cards then cost twenty textures and twenty blits, instead of
+     * hundreds of textures and a stream of GPU allocations.</p>
+     *
+     * <p>The strip covers the whole cycle. Where the cycle is longer than the
+     * cap, the moments are sampled evenly across it, so the animation keeps its
+     * own speed and skips rather than slowing down.</p>
      */
-    private Pixels renderSpin(Mesh mesh, ResolvedModel resolved, int size) {
-        int[] strip = new int[size * size * SPIN_FRAMES];
-        Rasterizer.View view = new Rasterizer.View(size, size, 2,
+    private Pixels renderAnimation(Mesh mesh, ResolvedModel resolved, int size) {
+        int period = Math.max(1, animationPeriod(resolved));
+        int frames = Math.min(period, CARD_FRAMES);
+        int[] pixels = new int[size * size * frames];
+        // The same rule the still uses, and for the same reason: above a card's
+        // size the render is already at the display's pixel density and a
+        // second sample is 3.7x the work for nothing. The strip inherited a
+        // hard-coded 2 from the rotation it replaced, which paid that 3.7x on
+        // every one of up to twenty-four frames -- and made a promoted card
+        // visibly sharper than the still it replaced, which is a jump.
+        int supersample = size >= 96 ? 1 : 2;
+        Rasterizer.View view = new Rasterizer.View(size, size, supersample,
                 0, 0, 1.0F, guiTransform(resolved), resolved.guiLightFront(), 0);
-        for (int frame = 0; frame < SPIN_FRAMES; frame++) {
-            float yaw = frame * (360.0F / SPIN_FRAMES);
-            int[] rendered = Rasterizer.render(mesh, view.withAngle(yaw, 0));
-            System.arraycopy(rendered, 0, strip, frame * size * size, size * size);
+        for (int frame = 0; frame < frames; frame++) {
+            int tick = (int) ((long) frame * period / frames);
+            int[] rendered = Rasterizer.render(mesh, view.withTick(tick));
+            System.arraycopy(rendered, 0, pixels, frame * size * size, size * size);
         }
-        return new Pixels(size, size * SPIN_FRAMES, strip);
+        return new Pixels(size, size * frames, pixels);
     }
 
     /**
@@ -999,8 +1029,8 @@ public final class PreviewService {
 
     // ----------------------------------------------------------------- keys
 
-    private static String key(LogicalModel model, int stateIndex, int size, boolean spin) {
-        return model.canonicalId() + "/" + stateIndex + "/" + size + (spin ? "/s" : "/f");
+    private static String key(LogicalModel model, int stateIndex, int size, boolean strip) {
+        return model.canonicalId() + "/" + stateIndex + "/" + size + (strip ? "/a" : "/f");
     }
 
     private static String detailKey(LogicalModel model, int stateIndex, int size,
@@ -1030,7 +1060,13 @@ public final class PreviewService {
      */
     int animationPeriod(ResolvedModel resolved) {
         int period = 1;
-        for (String textureId : resolved.distinctTextures()) {
+        // The slot map's own values, not distinctTextures(), which builds a
+        // stream, a sorted list and a result list every call. A card asks this
+        // once a frame to decide whether it has anything to animate, so with a
+        // full grid that was forty pipelines a frame for an answer that is
+        // nearly always 1. Duplicates and order do not matter here: lcm(a, a)
+        // is a, and lcm does not care what order it is given its arguments.
+        for (String textureId : resolved.textureSlots().values()) {
             if (textureId == null) {
                 continue;
             }
@@ -1152,7 +1188,7 @@ public final class PreviewService {
             if (frames > 1) {
                 int fits = (int) Math.sqrt(budget / (4.0 * frames));
                 // Never below what it was while moving: sharpening into
-                // something blurrier than the spin would be worse than not
+                // something blurrier than the animation would be worse than not
                 // sharpening at all.
                 cap = Math.max(movingCap, Math.min(cap, fits));
             }
