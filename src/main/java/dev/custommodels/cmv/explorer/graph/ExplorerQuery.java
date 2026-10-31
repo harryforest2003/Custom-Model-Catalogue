@@ -48,45 +48,44 @@ public record ExplorerQuery(String text,
     /**
      * The models that look like a given one, closest first.
      *
-     * <p>Four tiers, in this order, because "similar" is not one question. An
-     * exact match on either hash is the strongest answer and used to be the
-     * only one, which made the button a recolour-finder: it found the same
-     * sword in nine colours and missed the sword with a slightly different
-     * guard, which is the one somebody looking for a family wants to see.</p>
+     * <p>Six tiers, in this order, because "similar" is not one question and
+     * the honest answers to it are of very different strengths. Order is the
+     * answer's confidence, so an exact match is never buried among guesses.</p>
      *
      * <ol>
-     *   <li><b>The same shape.</b> Identical geometry hash \u2014 the same model
+     *   <li><b>The same shape.</b> Identical geometry hash: the same model
      *       wearing another texture.</li>
-     *   <li><b>The same textures.</b> Identical texture hash \u2014 one sheet cut
+     *   <li><b>The same textures.</b> Identical texture hash: one sheet cut
      *       into a family.</li>
-     *   <li><b>The same template.</b> Both inherit from one of the pack's own
-     *       parent models. This is the tier that answers the question, because
-     *       it is how packs are actually built: a template, and twenty models
-     *       that differ from it in a cuboid or two.</li>
-     *   <li><b>The same build.</b> Same item type, same number of cuboids, same
-     *       number of texture slots. A guess, and last.</li>
+     *   <li><b>The same template.</b> Both inherit one of the pack's own
+     *       parent models.</li>
+     *   <li><b>The same folder.</b> Both filed in the same subfolder. A pack
+     *       that puts its plushes in {@code item/plushes/} has said they belong
+     *       together, and that is better evidence than any measurement of the
+     *       geometry.</li>
+     *   <li><b>A shared texture.</b> They use at least one texture file in
+     *       common, without the whole set matching.</li>
+     *   <li><b>The same build.</b> Same kind of item, about as many cuboids,
+     *       about as many texture slots. A guess, and last.</li>
      * </ol>
      *
-     * <p>Vanilla parents do not count as a template. Every generated item in
-     * the game inherits {@code minecraft:builtin/generated}, so counting it
-     * would make every flat sprite in every pack a relative of every other.
-     * Flat models are left out of the fourth tier for the same reason: a
-     * sprite's shape <em>is</em> its texture, so two sprites with different
-     * textures are different pictures rather than similar shapes, and the
-     * second tier has already caught the ones that share a sheet.</p>
+     * <p>The first three alone were too tight to be useful. They found the same
+     * model in nine colours and nothing else: a family of plushes differing by
+     * one cuboid shared no hash, no template and no exact cuboid count, so a
+     * question whose whole point is "what else is like this" answered "nothing
+     * is". Hence the folder, the partial texture match, and a tolerance on the
+     * counts rather than equality.</p>
      *
-     * <p>An empty hash matches nothing, not everything. A model with no
-     * geometry or no textures has one, and treating absence as a value would
-     * have every broken model in a pack claim to look like every other.</p>
+     * <p>What keeps the loose tiers from swallowing the pack: the item folder
+     * itself is not a folder signal, because a pack that files everything flat
+     * has said nothing by doing so; a vanilla parent is not a template, since
+     * every generated item shares one; and flat models are left out of the last
+     * tier entirely, a sprite's shape being its texture rather than its
+     * geometry. An empty hash matches nothing rather than everything.</p>
      *
      * <p>The subject leads the list rather than being left out of it. The
      * question is nearly always "which of these did I mean", and that is
      * answered by seeing it beside the others, not instead of them.</p>
-     *
-     * <p>Ids are the default state's model id, which is what the grid
-     * restricts itself on and what a saved set holds. {@code canonicalId} is
-     * the stabler identity and the wrong one here: nothing else keys a visible
-     * list on it.</p>
      */
     public static java.util.Set<String> alike(java.util.List<LogicalModel> all,
                                               LogicalModel subject) {
@@ -102,10 +101,15 @@ public record ExplorerQuery(String text,
         String geometry = subject.geometryHash() == null ? "" : subject.geometryHash();
         String textures = subject.textureHash() == null ? "" : subject.textureHash();
         String template = templateOf(subject);
+        String folder = folderOf(subject);
+        java.util.Set<String> sheets =
+                new java.util.HashSet<>(subject.defaultState().resolved().textureSlots().values());
 
         java.util.List<String> sameShape = new java.util.ArrayList<>();
         java.util.List<String> sameTextures = new java.util.ArrayList<>();
         java.util.List<String> sameTemplate = new java.util.ArrayList<>();
+        java.util.List<String> sameFolder = new java.util.ArrayList<>();
+        java.util.List<String> sharedSheet = new java.util.ArrayList<>();
         java.util.List<String> sameBuild = new java.util.ArrayList<>();
 
         for (LogicalModel model : all) {
@@ -122,6 +126,10 @@ public record ExplorerQuery(String text,
                 sameTextures.add(other);
             } else if (!template.isEmpty() && template.equals(templateOf(model))) {
                 sameTemplate.add(other);
+            } else if (!folder.isEmpty() && folder.equals(folderOf(model))) {
+                sameFolder.add(other);
+            } else if (sharesASheet(sheets, model)) {
+                sharedSheet.add(other);
             } else if (sameBuildAs(subject, model)) {
                 sameBuild.add(other);
             }
@@ -129,6 +137,8 @@ public record ExplorerQuery(String text,
         out.addAll(sameShape);
         out.addAll(sameTextures);
         out.addAll(sameTemplate);
+        out.addAll(sameFolder);
+        out.addAll(sharedSheet);
         out.addAll(sameBuild);
         return out;
     }
@@ -158,11 +168,51 @@ public record ExplorerQuery(String text,
     }
 
     /**
-     * The loosest tier: made the same way, on the same kind of item.
+     * The subfolder a model is filed in, or {@code ""} when it is not in one.
      *
-     * <p>Item type as well as shape, because "twelve cuboids and one texture
-     * slot" on its own is a description of half a pack. With it, the answer to
-     * "what else looks like this sword" is other swords.</p>
+     * <p>The item folder itself does not count. Everything lands there by
+     * default, so a pack that files its models flat has expressed no grouping,
+     * and reading one into it would make every model in that pack similar to
+     * every other.</p>
+     */
+    public static String folderOf(LogicalModel model) {
+        if (model == null) {
+            return "";
+        }
+        String id = model.defaultState().modelId();
+        int slash = id.lastIndexOf('/');
+        if (slash < 0) {
+            return "";
+        }
+        String folder = id.substring(0, slash);
+        return folder.endsWith("item") || folder.endsWith("items") ? "" : folder;
+    }
+
+    /** Whether a model draws with any of the same texture files. */
+    public static boolean sharesASheet(java.util.Set<String> sheets, LogicalModel other) {
+        if (sheets == null || sheets.isEmpty() || other == null) {
+            return false;
+        }
+        for (String textureId : other.defaultState().resolved().textureSlots().values()) {
+            if (textureId != null && sheets.contains(textureId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The loosest tier: about as complicated, on the same kind of item.
+     *
+     * <p>About, not exactly. A family of plushes where one has an extra cuboid
+     * for an ear is the case this tier exists to catch, and equality excluded
+     * precisely that. The tolerance is a quarter of the smaller count, with a
+     * floor of two so that small models have any latitude at all \u2014 one
+     * cuboid against six is still a different thing.</p>
+     *
+     * <p>Item type is checked too, because "twelve cuboids and one texture
+     * slot" on its own describes half a pack. With it, the answer to "what
+     * else looks like this sword" is other swords.</p>
      */
     public static boolean sameBuildAs(LogicalModel subject, LogicalModel other) {
         if (subject == null || other == null) {
@@ -173,14 +223,21 @@ public record ExplorerQuery(String text,
         if (mine.generated() || theirs.generated()) {
             return false;
         }
-        if (mine.elementCount() <= 0 || mine.elementCount() != theirs.elementCount()) {
+        int ours = mine.elementCount();
+        int yours = theirs.elementCount();
+        if (ours <= 0 || yours <= 0) {
             return false;
         }
-        if (mine.textureSlots().size() != theirs.textureSlots().size()) {
+        if (Math.abs(ours - yours) > Math.max(2, Math.min(ours, yours) / 4)) {
+            return false;
+        }
+        if (Math.abs(mine.textureSlots().size() - theirs.textureSlots().size()) > 1) {
             return false;
         }
         return subject.type() == other.type();
     }
+
+
     /** Filter on how many appearances an item has. */
     public enum StateFilter {
         ANY("Any"),

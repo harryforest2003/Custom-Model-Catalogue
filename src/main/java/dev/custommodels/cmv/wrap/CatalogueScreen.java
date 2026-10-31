@@ -1823,6 +1823,9 @@ public final class CatalogueScreen extends Screen {
     }
 
     private List<HomeRow> homeRows = List.of();
+    /** What the copy button on the pack-health page last did. */
+    private String healthResult = "";
+
     private List<HomeRow> settingsRows = List.of();
     private List<HomeRow> healthRows = List.of();
 
@@ -1978,56 +1981,154 @@ public final class CatalogueScreen extends Screen {
     }
 
     /**
-     * The pack-health page: what the packs ask for and do not ship.
+     * What the scan read, and from where.
      *
-     * <p>Grouped by namespace rather than by pack, which looks like an
-     * oversight and is the point: a model no pack ships belongs to no pack,
-     * so there is nothing to group it by but the name it was asked for
-     * under.</p>
+     * <p>Off the home page, where it was most of the length. "Is my pack being
+     * read, and how much of it" is a question about the packs and belongs with
+     * the rest of them; the home page is for somebody who has not asked
+     * anything yet.</p>
+     */
+    private void addPackFacts(List<HomeRow> rows, ScanReport report) {
+        rows.add(new HomeRow("THE SCAN", 0, true));
+        if (report.isRunning()) {
+            rows.add(new HomeRow(report.phase().label() + "...", GuiTheme.ACCENT_BLUE, false));
+        }
+        for (String line : report.summaryLines()) {
+            rows.add(new HomeRow(line, GuiTheme.TEXT_DIM, false));
+        }
+        if (!report.failure().isEmpty()) {
+            rows.add(new HomeRow("Failed: " + report.failure(), GuiTheme.TEXT_ERROR, false));
+        }
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("PACKS BEING READ", 0, true));
+        List<String> packIds = index.packIds();
+        if (packIds.isEmpty()) {
+            rows.add(new HomeRow("None. Enable a resource pack and press R.",
+                    GuiTheme.TEXT_WARN, false));
+        }
+        java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+        for (LogicalModel model : index.browsable()) {
+            counts.merge(model.sourcePackId(), 1, Integer::sum);
+        }
+        for (String pack : packIds) {
+            boolean ignored = CmvConfig.get().ignoresPack(pack);
+            rows.add(new HomeRow(shortPack(pack) + "  \u2014  "
+                    + counts.getOrDefault(pack, 0) + " models"
+                    + (ignored ? "   (not scanned)" : ""),
+                    ignored ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_DIM, false));
+        }
+
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("RESOURCE PACKS", 0, true));
+        if (!dev.custommodels.cmv.core.PackHistory.canRestore()) {
+            // Saying so beats leaving a blank where a button might have been:
+            // the answer to "why is there no restore button" is that there is
+            // nothing fuller to go back to.
+            rows.add(new HomeRow(McCompat.selectedPackIds().size()
+                    + " packs on. Nothing fuller has been seen, so there is nothing "
+                    + "to put back yet.", GuiTheme.TEXT_MUTED, false));
+        } else {
+            rows.add(new HomeRow("Fewer packs are on than last time this looked. "
+                    + "The game switches them all off when a reload fails.",
+                    GuiTheme.TEXT_WARN, false));
+            rows.add(new HomeRow("Put back "
+                            + dev.custommodels.cmv.core.PackHistory.candidateSize()
+                            + " remembered packs",
+                    GuiTheme.TEXT_BRIGHT, false, () -> {
+                int restored = dev.custommodels.cmv.core.PackHistory.restore();
+                packResult = restored > 0
+                        ? "Turned " + restored + " packs back on."
+                        : "Nothing could be restored; the files are gone.";
+                rebuild();
+            }));
+        }
+
+        if (!packResult.isEmpty()) {
+            rows.add(new HomeRow(packResult, GuiTheme.TEXT_DIM, false));
+        }
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("PREVIEWS", 0, true));
+        rows.add(new HomeRow(index.previews().statistics(), GuiTheme.TEXT_DIM, false));
+    }
+
+    /**
+     * What the packs ask for and do not ship: models, and textures.
+     *
+     * <p>A missing texture is the other half of "why does my skin look wrong",
+     * and it looks like a different bug: the model resolves, it is listed, it
+     * draws \u2014 and what it draws is the missing-texture chequer. It was
+     * collected all along and only ever surfaced as a warning in a folded
+     * list, which is the wrong place for the second most common fault these
+     * packs have.</p>
+     */
+    private void appendMissing(List<HomeRow> rows, ScanReport report) {
+        List<String> missing = report.missingModels();
+        List<String> empty = report.emptyModels();
+        List<String> textures = report.missingTextures();
+
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("WHAT THE PACKS ARE MISSING", 0, true));
+        if (missing.isEmpty() && empty.isEmpty() && textures.isEmpty()) {
+            rows.add(new HomeRow(index.models().isEmpty()
+                    ? "Nothing has been scanned yet."
+                    : "Every model and every texture the definitions ask for is present. "
+                            + "Nothing to report.",
+                    GuiTheme.TEXT_MUTED, false));
+            return;
+        }
+        rows.add(new HomeRow(missing.size() + " model file(s) referenced and not shipped, "
+                + empty.size() + " resolving to no geometry, "
+                + textures.size() + " texture(s) missing.", GuiTheme.TEXT_WARN, false));
+        rows.add(new HomeRow(report.brokenSkipped() > 0
+                ? report.brokenSkipped() + " state(s) are being left out of the grid, "
+                        + "because \"models whose files are missing\" is off."
+                : "The broken ones are listed in the grid and labelled, because "
+                        + "\"models whose files are missing\" is on.",
+                GuiTheme.TEXT_MUTED, false));
+        // That switch is about models. A model with a missing texture resolves
+        // and draws, so it is never one of the ones left out, whichever way the
+        // switch is set.
+        rows.add(new HomeRow("Copy the lot", GuiTheme.TEXT_BRIGHT, false, () -> {
+            StringBuilder out = new StringBuilder();
+            for (String id : missing) {
+                out.append("missing model    ").append(id).append('\n');
+            }
+            for (String id : empty) {
+                out.append("no geometry      ").append(id).append('\n');
+            }
+            for (String id : textures) {
+                out.append("missing texture  ").append(id).append('\n');
+            }
+            McCompat.copyToClipboard(out.toString());
+            healthResult = "Copied " + (missing.size() + empty.size() + textures.size())
+                    + " ids.";
+            rebuildHealth();
+        }));
+        if (!healthResult.isEmpty()) {
+            rows.add(new HomeRow(healthResult, GuiTheme.TEXT_DIM, false));
+        }
+
+        appendByNamespace(rows, "MODELS NO ENABLED PACK SHIPS", missing);
+        appendByNamespace(rows, "MODELS PRESENT BUT DRAWING NOTHING", empty);
+        appendByNamespace(rows, "TEXTURES NO ENABLED PACK SHIPS", textures);
+    }
+
+    /**
+     * The pack-health page: what was read, what is missing, what complained.
+     *
+     * <p>In that order, because it is the order somebody debugging a pack asks
+     * the questions in: is it being read at all, is anything absent, and then
+     * the detail. The warnings are last and folded, which is what got them off
+     * the home page.</p>
      */
     private void rebuildHealth() {
         ScanReport report = index.report();
         List<HomeRow> rows = new ArrayList<>();
-        List<String> missing = report.missingModels();
-        List<String> empty = report.emptyModels();
-
-        rows.add(new HomeRow("WHAT THE PACKS ARE MISSING", 0, true));
-        if (missing.isEmpty() && empty.isEmpty()) {
-            rows.add(new HomeRow(index.models().isEmpty()
-                    ? "Nothing has been scanned yet."
-                    : "Every model every definition asks for is present. Nothing to report.",
-                    GuiTheme.TEXT_MUTED, false));
-            appendWarnings(rows, report);
-            healthRows = List.copyOf(rows);
-            return;
-        }
-        rows.add(new HomeRow(missing.size() + " model file(s) referenced and not shipped, "
-                + empty.size() + " resolving to no geometry.", GuiTheme.TEXT_WARN, false));
-        rows.add(new HomeRow(report.brokenSkipped() > 0
-                ? report.brokenSkipped() + " state(s) are being left out of the grid, "
-                        + "because \"models whose files are missing\" is off."
-                : "They are listed in the grid and labelled, because \"models whose "
-                        + "files are missing\" is on.", GuiTheme.TEXT_MUTED, false));
-        rows.add(new HomeRow("Copy the lot", GuiTheme.TEXT_BRIGHT, false, () -> {
-            StringBuilder out = new StringBuilder();
-            for (String id : missing) {
-                out.append("missing  ").append(id).append('\n');
-            }
-            for (String id : empty) {
-                out.append("no geometry  ").append(id).append('\n');
-            }
-            McCompat.copyToClipboard(out.toString());
-            packResult = "Copied " + (missing.size() + empty.size()) + " model ids.";
-            rebuildHealth();
-        }));
-        if (!packResult.isEmpty()) {
-            // The button's own answer, on the page the button is on. It used to
-            // be written to the home page, which nobody is looking at.
-            rows.add(new HomeRow(packResult, GuiTheme.TEXT_DIM, false));
-        }
-
-        appendByNamespace(rows, "NOT SHIPPED BY ANY ENABLED PACK", missing);
-        appendByNamespace(rows, "PRESENT BUT DRAWING NOTHING", empty);
+        addPackFacts(rows, report);
+        appendMissing(rows, report);
         appendWarnings(rows, report);
         healthRows = List.copyOf(rows);
     }
@@ -2148,70 +2249,6 @@ public final class CatalogueScreen extends Screen {
         rows.add(new HomeRow("R  rescan the packs      I  index statistics      "
                 + "Esc  close      Right-click a card  add to a set",
                 GuiTheme.TEXT_DIM, false));
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("THE SCAN", 0, true));
-        if (report.isRunning()) {
-            rows.add(new HomeRow(report.phase().label() + "...", GuiTheme.ACCENT_BLUE, false));
-        }
-        for (String line : report.summaryLines()) {
-            rows.add(new HomeRow(line, GuiTheme.TEXT_DIM, false));
-        }
-        if (!report.failure().isEmpty()) {
-            rows.add(new HomeRow("Failed: " + report.failure(), GuiTheme.TEXT_ERROR, false));
-        }
-
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("PACKS BEING READ", 0, true));
-        List<String> packIds = index.packIds();
-        if (packIds.isEmpty()) {
-            rows.add(new HomeRow("None. Enable a resource pack and press R.",
-                    GuiTheme.TEXT_WARN, false));
-        }
-        java.util.Map<String, Integer> counts = new java.util.HashMap<>();
-        for (LogicalModel model : index.browsable()) {
-            counts.merge(model.sourcePackId(), 1, Integer::sum);
-        }
-        for (String pack : packIds) {
-            boolean ignored = CmvConfig.get().ignoresPack(pack);
-            rows.add(new HomeRow(shortPack(pack) + "  \u2014  "
-                    + counts.getOrDefault(pack, 0) + " models"
-                    + (ignored ? "   (not scanned)" : ""),
-                    ignored ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_DIM, false));
-        }
-
-
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("RESOURCE PACKS", 0, true));
-        if (!dev.custommodels.cmv.core.PackHistory.canRestore()) {
-            // Saying so beats leaving a blank where a button might have been:
-            // the answer to "why is there no restore button" is that there is
-            // nothing fuller to go back to.
-            rows.add(new HomeRow(McCompat.selectedPackIds().size()
-                    + " packs on. Nothing fuller has been seen, so there is nothing "
-                    + "to put back yet.", GuiTheme.TEXT_MUTED, false));
-        } else {
-            rows.add(new HomeRow("Fewer packs are on than last time this looked. "
-                    + "The game switches them all off when a reload fails.",
-                    GuiTheme.TEXT_WARN, false));
-            rows.add(new HomeRow("Put back "
-                            + dev.custommodels.cmv.core.PackHistory.candidateSize()
-                            + " remembered packs",
-                    GuiTheme.TEXT_BRIGHT, false, () -> {
-                int restored = dev.custommodels.cmv.core.PackHistory.restore();
-                packResult = restored > 0
-                        ? "Turned " + restored + " packs back on."
-                        : "Nothing could be restored; the files are gone.";
-                rebuildHome();
-            }));
-        }
-
-        if (!packResult.isEmpty()) {
-            rows.add(new HomeRow(packResult, GuiTheme.TEXT_DIM, false));
-        }
-
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("PREVIEWS", 0, true));
-        rows.add(new HomeRow(index.previews().statistics(), GuiTheme.TEXT_DIM, false));
         homeRows = List.copyOf(rows);
     }
 

@@ -138,6 +138,17 @@ public final class GraphBuilder {
     private final List<String> emptyModels = new ArrayList<>();
 
     /**
+     * Textures a model asks for that no enabled pack ships.
+     *
+     * <p>The other half of "why is my skin wrong". A model can resolve
+     * perfectly, be listed in the grid, and draw the missing-texture chequer
+     * because one of its slots points at a file that is not there \u2014 which
+     * looks like a different bug entirely from a model that is absent, and is
+     * reported here as its own list for that reason.</p>
+     */
+    private final List<String> missingTextures = new ArrayList<>();
+
+    /**
      * @param resolver              supplies resolved models; its caches are what
      *                              keep this cheap for large packs
      * @param classifier            maps a base item id to a type; supplied by the
@@ -188,6 +199,11 @@ public final class GraphBuilder {
     /** Model ids that resolve to a file with no geometry in it. */
     public List<String> emptyModels() {
         return List.copyOf(emptyModels);
+    }
+
+    /** Texture ids a model asked for that no enabled pack ships. */
+    public List<String> missingTextures() {
+        return List.copyOf(missingTextures);
     }
 
 
@@ -503,9 +519,12 @@ public final class GraphBuilder {
         for (ModelState state : states) {
             if (!state.resolved().exists()) {
                 missingModels.add(state.modelId());
-            } else if (state.resolved().isEmpty()) {
+                continue;
+            }
+            if (state.resolved().isEmpty()) {
                 emptyModels.add(state.modelId());
             }
+            missingTextures.addAll(state.resolved().missingTextures());
         }
         if (!includeBroken) {
             List<ModelState> usable = new ArrayList<>(states.size());

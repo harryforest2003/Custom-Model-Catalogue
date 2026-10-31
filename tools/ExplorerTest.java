@@ -77,6 +77,7 @@ public final class ExplorerTest {
         renderTests();
         textureNamespaceTests();
         whatLooksLikeThis();
+        whatCountsAsSimilar();
         whatThePacksAreMissing();
         whatColourIsThis();
 
@@ -2241,6 +2242,106 @@ public final class ExplorerTest {
         keeping.build(parse("minecraft:diamond_sword", definition));
         check("and the run that lists them skips nothing",
                 keeping.skippedBroken() == 0);
+    }
+
+    /**
+     * How loose "similar" is, and what still does not count.
+     *
+     * <p>Written against the complaint that made the tiers looser: a family of
+     * plushes differing by a cuboid shared no hash, no template and no exact
+     * cuboid count, so the one question the button exists to answer came back
+     * empty. The cases here are the two signals that fixed it and the one that
+     * must stay excluded, because a filter that matches everything is the same
+     * as no filter.</p>
+     */
+    private static void whatCountsAsSimilar() {
+        header("Look-alike tiers");
+
+        MemorySource source = new MemorySource();
+        source.model("p:item/plushes/cat", "{\"elements\":" + cuboids(12)
+                + ",\"textures\":{\"all\":\"p:cat\",\"extra\":\"p:eyes\"}}");
+        // One cuboid more, its own textures, same folder.
+        source.model("p:item/plushes/dog", "{\"elements\":" + cuboids(13)
+                + ",\"textures\":{\"all\":\"p:dog\",\"extra\":\"p:nose\"}}");
+        // Another folder, quite different geometry, but drawn with one of the
+        // same sheets.
+        source.model("p:item/charms/cat_charm", "{\"elements\":" + cuboids(3)
+                + ",\"textures\":{\"all\":\"p:cat\",\"extra\":\"p:beads\"}}");
+        // Flat in the item folder, one cuboid, nothing in common.
+        source.model("p:item/sword", "{\"elements\":" + cuboids(1)
+                + ",\"textures\":{\"all\":\"p:steel\",\"extra\":\"p:hilt\"}}");
+        for (String texture : new String[]{"p:cat", "p:eyes", "p:dog", "p:nose",
+                "p:beads", "p:steel", "p:hilt"}) {
+            source.texture(texture, 16, 16);
+        }
+
+        List<LogicalModel> models = build(source, "minecraft:diamond_sword", """
+                {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
+                  "cases":[
+                    {"when":"a","model":{"type":"minecraft:model","model":"p:item/plushes/cat"}},
+                    {"when":"b","model":{"type":"minecraft:model","model":"p:item/plushes/dog"}},
+                    {"when":"c","model":{"type":"minecraft:model","model":"p:item/charms/cat_charm"}},
+                    {"when":"d","model":{"type":"minecraft:model","model":"p:item/sword"}}]}}
+                """);
+        check("the four are distinct cards", models.size() == 4);
+
+        LogicalModel cat = pick(models, "plushes/cat");
+        LogicalModel dog = pick(models, "plushes/dog");
+        LogicalModel sword = pick(models, "item/sword");
+        java.util.List<String> like = new java.util.ArrayList<>(
+                ExplorerQuery.alike(models, cat));
+
+        // The complaint, as a check: one cuboid's difference used to be enough
+        // to be told these were unrelated.
+        check("a plush with an extra cuboid is similar",
+                like.stream().anyMatch(id -> id.endsWith("plushes/dog")));
+        check("so is one sharing a sheet from another folder",
+                like.stream().anyMatch(id -> id.endsWith("charms/cat_charm")));
+        check("but not a one-cuboid model filed flat with nothing in common",
+                like.stream().noneMatch(id -> id.endsWith("item/sword")));
+
+        int folderAt = indexEndingWith(like, "plushes/dog");
+        int sheetAt = indexEndingWith(like, "charms/cat_charm");
+        check("the folder is the stronger signal and is offered first",
+                folderAt > 0 && sheetAt > folderAt);
+
+        check("the item folder itself says nothing",
+                ExplorerQuery.folderOf(sword).isEmpty());
+        check("and a pack's own subfolder does",
+                ExplorerQuery.folderOf(cat).endsWith("plushes"));
+
+        check("a cuboid of difference is within tolerance",
+                ExplorerQuery.sameBuildAs(cat, dog));
+        check("eleven cuboids of difference is not",
+                !ExplorerQuery.sameBuildAs(cat, sword));
+    }
+
+    /** N stacked cuboids, with two texture slots so a sheet can be shared. */
+    private static String cuboids(int count) {
+        StringBuilder out = new StringBuilder("[");
+        for (int i = 0; i < count; i++) {
+            out.append(i == 0 ? "" : ",")
+                    .append("{\"from\":[0,").append(i).append(",0],\"to\":[16,")
+                    .append(i + 1).append(",16],\"faces\":{")
+                    .append("\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#all\"},")
+                    .append("\"south\":{\"uv\":[0,0,16,16],\"texture\":\"#extra\"}}}");
+        }
+        return out.append("]").toString();
+    }
+
+    private static LogicalModel pick(List<LogicalModel> models, String ending) {
+        return models.stream()
+                .filter(m -> m.defaultState().modelId().endsWith(ending))
+                .findFirst().orElseThrow();
+    }
+
+    private static int indexEndingWith(java.util.List<String> ids, String ending) {
+        for (int i = 0; i < ids.size(); i++) {
+            if (ids.get(i).endsWith(ending)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static void whatLooksLikeThis() {

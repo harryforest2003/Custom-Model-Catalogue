@@ -154,11 +154,14 @@ public final class ScanReport {
      */
     private List<String> missingModels = List.of();
     private List<String> emptyModels = List.of();
+    private List<String> missingTextures = List.of();
     private int brokenSkipped;
 
-    synchronized void setBroken(List<String> missing, List<String> empty, int skipped) {
+    synchronized void setBroken(List<String> missing, List<String> empty,
+                                List<String> textures, int skipped) {
         this.missingModels = distinctSorted(missing);
         this.emptyModels = distinctSorted(empty);
+        this.missingTextures = distinctSorted(textures);
         this.brokenSkipped = skipped;
     }
 
@@ -175,6 +178,11 @@ public final class ScanReport {
 
     public synchronized List<String> emptyModels() {
         return emptyModels;
+    }
+
+    /** Texture ids the models ask for that no enabled pack ships. */
+    public synchronized List<String> missingTextures() {
+        return missingTextures;
     }
 
     /** How many states were dropped from the grid for being broken. */
