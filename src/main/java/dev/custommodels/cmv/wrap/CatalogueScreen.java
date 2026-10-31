@@ -142,13 +142,14 @@ public final class CatalogueScreen extends Screen {
          * chosen on the outcome of the write rather than on a guess.</p>
          */
         /**
-         * How to use the mod, then what the packs hold and what is wrong with them.
+         * How to use the mod, then what the packs hold.
          *
-         * <p>Where the screen opens, because it answers the two questions a
-         * player has before they have asked anything: what this is for, and
-         * whether the thing they are about to browse is all there. The
-         * instructions sit above the diagnostics because the diagnostics only
-         * matter once something has gone wrong.</p>
+         * <p>Where the screen opens, because it answers the question a player
+         * has before they have asked anything: what this is for. What is
+         * wrong with the packs used to sit under it, which meant the page
+         * opened on four lines of instructions followed by forty lines of pack
+         * minutiae. That half lives on the pack health page now; the header
+         * still carries the warning count, so nothing has gone quiet.</p>
          */
         HOME("Home", "How to use the mod, and what the packs contain"),
         /**
@@ -180,13 +181,17 @@ public final class CatalogueScreen extends Screen {
          */
         SETTINGS("Settings", "Everything this mod can be told to do differently"),
         /**
-         * What the packs are missing, for whoever is making them.
+         * What the packs are missing, and whatever the scan complained about.
          *
-         * <p>Off by default and switched on from the settings page. A player
-         * cannot act on a list of models their packs do not ship; the person
-         * who built the pack can, and this is the only place that knows.</p>
+         * <p>It was off by default and switched on from the settings page, on
+         * the grounds that a player cannot act on a list of models their packs
+         * do not ship. That stopped being true when the warnings moved here:
+         * "why does that skin not work" is a player's question, this became
+         * the only page that answers it, and a switch hiding the only copy of
+         * an answer is not a setting but a trap. So it is always listed, and
+         * the warnings on it fold away instead.</p>
          */
-        HEALTH("Pack health", "Models the packs ask for and do not ship");
+        HEALTH("Pack health", "What the packs are missing, and what the scan said");
 
         final String label;
         final String blurb;
@@ -228,6 +233,18 @@ public final class CatalogueScreen extends Screen {
     private WrapCatalogue.Order order = WrapCatalogue.Order.NAME;
     private java.util.Map<ItemType, Integer> typeCounts = java.util.Map.of();
     private boolean compatibleOnly = true;
+
+    /**
+     * The colour the grid is narrowed to, or {@code ANY}.
+     *
+     * <p>Per screen rather than in the config: it is a question being asked of
+     * the grid right now ("where are the red ones"), not a way the player
+     * wants the mod to behave from here on.</p>
+     */
+    private dev.custommodels.cmv.explorer.scan.SkinColours.Family colourFilter = dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY;
+
+    /** True while the colour pass is still reading textures for this filter. */
+    private boolean colourWaiting;
     /** The player's own lists: favourites, and the sets they have made. */
     private final dev.custommodels.cmv.collection.SkinSets sets =
             dev.custommodels.cmv.collection.SkinSets.get();
@@ -242,8 +259,14 @@ public final class CatalogueScreen extends Screen {
      */
     private java.util.Set<String> lookAlike;
 
-    /** The model the look-alikes are of, for the bar that says so. */
-    private String lookAlikeOf = "";
+    /**
+     * The sentence the look-alike bar shows, worked out when the set is.
+     *
+     * <p>Not built while drawing. It is four string joins, and the bar is
+     * redrawn every frame for as long as the grid stays narrowed, which is
+     * exactly the per-frame work this screen is gated against.</p>
+     */
+    private String lookAlikeSaid = "";
     /** True when the grid is showing the favourites rather than a set. */
     private boolean openFavourites;
     /**
@@ -383,7 +406,12 @@ public final class CatalogueScreen extends Screen {
         screen.tab = Tab.CATALOGUE;
         screen.lookAlike = ExplorerQuery.alike(
                 ExplorerIndex.get().browsable(), model);
-        screen.lookAlikeOf = model == null ? "" : model.displayName();
+        int others = screen.lookAlike.size() - 1;
+        String name = model == null ? "" : model.displayName();
+        screen.lookAlikeSaid = others <= 0
+                ? "Nothing else looks like " + name
+                : others + (others == 1 ? " other looks" : " others look")
+                        + " like " + name;
         return screen;
     }
 
@@ -534,6 +562,7 @@ public final class CatalogueScreen extends Screen {
             browseModels = ExplorerQuery.sort(index.view(browseQuery), order);
             browseModels = keepMembers(browseModels,
                     model -> model.defaultState().modelId());
+            browseModels = dev.custommodels.cmv.explorer.scan.SkinColours.keep(browseModels, colourFilter, model -> model);
             typeCounts = index.counts();
             visible = List.of();
             clampPage();
@@ -558,6 +587,7 @@ public final class CatalogueScreen extends Screen {
         }
 
         base = keepMembers(base, target -> target.model().defaultState().modelId());
+        base = dev.custommodels.cmv.explorer.scan.SkinColours.keep(base, colourFilter, WrapTarget::model);
         typeCounts = catalogue.countsByType(base);
         browseModels = List.of();
         visible = WrapCatalogue.sort(
@@ -734,7 +764,10 @@ public final class CatalogueScreen extends Screen {
         lastMouseY = mouseY;
         // Measured off-thread and only when out of date, so this is a no-op on
         // all but the first frame after a scan.
-        if (tab == Tab.HOME) {
+        if (tab == Tab.SETTINGS) {
+            // The settings page is where both the figures and the switches
+            // that act on them now are. It used to be asked for on the home
+            // page, which is no longer the page that shows any of it.
             AtlasBudget.request(index);
         }
         hits.clear();
@@ -828,6 +861,35 @@ public final class CatalogueScreen extends Screen {
         }
     }
 
+    /**
+     * How tall one tab row is drawn, shrunk when they would not all fit.
+     *
+     * <p>The tabs are the one part of the sidebar that cannot simply stop when
+     * it runs out of room: the category list below breaks out of its loop and
+     * loses nothing but categories, while a tab that is not drawn is a page
+     * with no way into it. At GUI scale 4 on a short window the whole screen
+     * is about 240 pixels tall, and six rows of eighteen plus the header and
+     * the category heading is most of that.</p>
+     *
+     * <p>So they shrink instead, down to a floor: the text in a row is nine
+     * pixels tall, and a row shorter than that is not smaller, it is
+     * unreadable. Room is left for the category heading and two categories,
+     * because a sidebar of nothing but tabs is not the one to aim for.</p>
+     */
+    private int navRowHeight() {
+        int count = Tab.values().length;
+        int available = this.height - FOOTER_H - (HEADER_H + 6) - CATEGORY_RESERVE;
+        if (count * NAV_ROW_H <= available) {
+            return NAV_ROW_H;
+        }
+        return Math.max(NAV_ROW_MIN, available / Math.max(1, count));
+    }
+
+    /** The space the category heading and a couple of categories want. */
+    private static final int CATEGORY_RESERVE = 46;
+    /** Below this a row is not smaller, it is unreadable. */
+    private static final int NAV_ROW_MIN = 12;
+
     private void drawSidebar(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
         GuiTheme.rect(graphics, 0, 0, sidebarWidth(), HEADER_H, GuiTheme.SIDEBAR);
         GuiTheme.text(graphics, this.font,
@@ -836,17 +898,14 @@ public final class CatalogueScreen extends Screen {
         GuiTheme.rect(graphics, 0, HEADER_H - 1, sidebarWidth(), HEADER_H, GuiTheme.BORDER);
 
         int y = HEADER_H + 6;
+        int navRow = navRowHeight();
         for (Tab candidate : Tab.values()) {
-            if (candidate == Tab.HEALTH && !CmvConfig.get().packHealth) {
-                // Not a page a player can act on; see the setting.
-                continue;
-            }
             boolean selected = tab == candidate;
-            boolean hover = inside(mouseX, mouseY, 0, y, sidebarWidth(), NAV_ROW_H);
-            GuiTheme.navItem(graphics, this.font, 0, y, sidebarWidth(), NAV_ROW_H,
+            boolean hover = inside(mouseX, mouseY, 0, y, sidebarWidth(), navRow);
+            GuiTheme.navItem(graphics, this.font, 0, y, sidebarWidth(), navRow,
                     candidate.label, "", selected, hover, true);
             final Tab target = candidate;
-            navHits.add(new Hit(0, y, sidebarWidth(), NAV_ROW_H, () -> {
+            navHits.add(new Hit(0, y, sidebarWidth(), navRow, () -> {
                 if (target == Tab.SETS) {
                     // Back to the list of names, out of whatever was open.
                     closeSet();
@@ -855,7 +914,7 @@ public final class CatalogueScreen extends Screen {
                 page = 0;
                 rebuild();
             }));
-            y += NAV_ROW_H;
+            y += navRow;
         }
 
         // Categories, taken from the base item's own registry tags. This
@@ -974,6 +1033,11 @@ public final class CatalogueScreen extends Screen {
             chips.add(new String[]{compatibleOnly ? "Compatible only" : "All wraps",
                     compatibleOnly ? "1" : "0"});
         }
+        // Offered on both grids: what colour a model is, is a fact about the
+        // model, and is as good a way to find a wrap to apply as to find one
+        // to look at.
+        chips.add(new String[]{colourChipLabel(),
+                colourFilter == dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY ? "0" : "1"});
         if (category != ItemType.ALL) {
             chips.add(new String[]{"Category: " + category.displayName(), "1"});
         }
@@ -1099,6 +1163,9 @@ public final class CatalogueScreen extends Screen {
                     category = ItemType.ALL;
                 } else if (chosen.startsWith("View:")) {
                     config.setDensity(config.density().next());
+                } else if (chosen.startsWith("Colour:")) {
+                    colourFilter = colourFilter.next();
+                    beginColourPass();
                 } else if (chosen.startsWith("States:")) {
                     browseQuery = browseQuery.withStates(browseQuery.states().next());
                 }
@@ -1108,6 +1175,34 @@ public final class CatalogueScreen extends Screen {
             x += width + 4;
         }
         drawFilterEdge(graphics);
+    }
+
+    /**
+     * What the colour chip says: the colour, or how far off knowing it is.
+     *
+     * <p>Nothing in the scan reads a pixel, so the first time a colour is
+     * asked for there is a pass to run. Saying so beats a chip that looks like
+     * it did nothing, which is what an empty grid would look like.</p>
+     */
+    private String colourChipLabel() {
+        dev.custommodels.cmv.explorer.scan.SkinColours.Family want = colourFilter;
+        if (want == dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY) {
+            return "Colour: any";
+        }
+        if (!dev.custommodels.cmv.explorer.scan.SkinColours.ready(index.browsable())) {
+            return "Colour: reading textures " + dev.custommodels.cmv.explorer.scan.SkinColours.percent() + "%";
+        }
+        return "Colour: " + want.displayName().toLowerCase(Locale.ROOT);
+    }
+
+    /** Starts the colour pass, unless there is nothing to ask it for. */
+    private void beginColourPass() {
+        if (colourFilter == dev.custommodels.cmv.explorer.scan.SkinColours.Family.ANY) {
+            colourWaiting = false;
+            return;
+        }
+        dev.custommodels.cmv.explorer.scan.SkinColours.begin(index.browsable(), index.source());
+        colourWaiting = !dev.custommodels.cmv.explorer.scan.SkinColours.ready(index.browsable());
     }
 
     /** A chip on the row the search box is on. Returns where the next one goes. */
@@ -1505,15 +1600,16 @@ public final class CatalogueScreen extends Screen {
     // ----------------------------------------------------------- diagnostics
 
     /**
-     * What the packs contain, and what is wrong with them.
+     * What the mod is for, and what the packs contain.
      *
      * <p>Everything here was already being collected and had nowhere to go: the
-     * scan counts what it read and what it could not, every model keeps the
-     * warnings raised while it was built, and the pack list is what the game
-     * says is loaded. It was reachable only as a debug overlay, which is the
-     * wrong place for the answer to "why does that skin not work" — the most
-     * common question these packs raise, and one the mod can usually
-     * answer.</p>
+     * scan counts what it read and what it could not, and the pack list is
+     * what the game says is loaded. It was reachable only as a
+     * debug overlay, which is the wrong place for the answer to "why does that
+     * skin not work" — the most common question these packs raise, and one
+     * the mod can usually answer. What is wrong with the packs has moved on
+     * from here to the pack health page, which is the page that can do
+     * something about it.</p>
      */
     private void drawHome(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
         homeContentHeight = drawRows(graphics, mouseX, mouseY, homeRows);
@@ -1543,7 +1639,15 @@ public final class CatalogueScreen extends Screen {
                 y = homeLine(graphics, left, y, top, bottom, row.text(), row.colour());
             }
         }
-        return y + homeScroll - top;
+        int height = y + homeScroll - top;
+        // A page that has just got shorter must not be left scrolled past its
+        // end: a fold closing, or a switch from a long page to a short one,
+        // would otherwise draw every row above the viewport and read as a
+        // screen that had gone blank. Corrected here rather than everywhere a
+        // page can shorten, because this is the one place that knows how tall
+        // the page turned out.
+        homeScroll = Math.min(homeScroll, Math.max(0, height - (bottom - top)));
+        return height;
     }
 
     /**
@@ -1588,6 +1692,21 @@ public final class CatalogueScreen extends Screen {
         CmvConfig config = CmvConfig.get();
         List<HomeRow> rows = new ArrayList<>();
 
+        // The colours came off the home page, where they were the only thing
+        // on it that was a setting rather than a reading. The picker they open
+        // and the ready-made palettes are unchanged.
+        rows.add(new HomeRow("APPEARANCE", 0, true));
+        rows.add(new HomeRow(String.format("Primary colour   \u2014   #%06X   "
+                        + "(selection, focus, the active tab)", GuiTheme.primary()),
+                GuiTheme.TEXT_BRIGHT, false, this::openPrimaryPicker));
+        rows.add(new HomeRow(String.format("Secondary colour   \u2014   #%06X   "
+                        + "(panels, cards and the inventory, darkened from this)",
+                        GuiTheme.secondary()),
+                GuiTheme.TEXT_BRIGHT, false, this::openSecondaryPicker));
+        rows.add(new HomeRow("Start from a ready-made pair", GuiTheme.TEXT_DIM, false,
+                this::openPaletteMenu));
+
+        rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("WHAT THE GRID SHOWS", 0, true));
         rows.add(toggle("Models whose files are missing", config.showBrokenEntries,
                 "listed and labelled", "left out",
@@ -1641,10 +1760,17 @@ public final class CatalogueScreen extends Screen {
                 + dev.custommodels.cmv.core.ItemFacts.count() + " items are described now.",
                 GuiTheme.TEXT_MUTED, false));
 
+        // Taking a namespace out of the packs is a setting that happens to be
+        // measured in pixels. It sat beside the atlas figures on the home page
+        // long after the home page stopped being where settings live. The
+        // figures stayed there; the switches came here.
+        rows.add(new HomeRow("", 0, false));
+        rows.add(new HomeRow("ITEM ATLAS", 0, true));
+        addAtlasRows(rows);
+        addNamespaceRows(rows);
+
         rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("FOR PACK AUTHORS", 0, true));
-        rows.add(toggle("Show the pack health page", config.packHealth,
-                "on", "off", () -> config.packHealth = !config.packHealth, false));
         rows.add(toggle("Show how each model was resolved", config.debugResolution,
                 "on", "off", () -> config.debugResolution = !config.debugResolution, false));
 
@@ -1711,6 +1837,7 @@ public final class CatalogueScreen extends Screen {
                     ? "Nothing has been scanned yet."
                     : "Every model every definition asks for is present. Nothing to report.",
                     GuiTheme.TEXT_MUTED, false));
+            appendWarnings(rows, report);
             healthRows = List.copyOf(rows);
             return;
         }
@@ -1731,12 +1858,73 @@ public final class CatalogueScreen extends Screen {
             }
             McCompat.copyToClipboard(out.toString());
             packResult = "Copied " + (missing.size() + empty.size()) + " model ids.";
-            rebuildHome();
+            rebuildHealth();
         }));
+        if (!packResult.isEmpty()) {
+            // The button's own answer, on the page the button is on. It used to
+            // be written to the home page, which nobody is looking at.
+            rows.add(new HomeRow(packResult, GuiTheme.TEXT_DIM, false));
+        }
 
         appendByNamespace(rows, "NOT SHIPPED BY ANY ENABLED PACK", missing);
         appendByNamespace(rows, "PRESENT BUT DRAWING NOTHING", empty);
+        appendWarnings(rows, report);
         healthRows = List.copyOf(rows);
+    }
+
+    /**
+     * Whether the warning list is unfolded. Shut every time the screen opens.
+     *
+     * <p>Deliberately not in the config: a fold is something you did to read a
+     * list once, not a preference about how the mod should behave.</p>
+     */
+    private boolean warningsOpen;
+
+    /**
+     * The warnings, last on the page and folded away.
+     *
+     * <p>They were the bottom half of the home page — forty lines of "this
+     * pack asks for a model it does not ship", in front of every player who
+     * opened the screen to look at a sword. Whether anything is wrong at all is
+     * the part that matters to someone who is not fixing a pack, so the count
+     * is what stays visible and the lines behind it open when asked.</p>
+     *
+     * <p>Counted from {@code warningCount()} rather than from the length of the
+     * list, because the list is capped and the count is not: a heading that
+     * said 40 when the scan had raised four hundred would be the one number on
+     * the page that lied.</p>
+     */
+    private void appendWarnings(List<HomeRow> rows, ScanReport report) {
+        int total = report.warningCount();
+        rows.add(new HomeRow("", 0, false));
+        if (total == 0) {
+            rows.add(new HomeRow("WHAT IS WRONG  (0)", 0, true));
+            rows.add(new HomeRow(
+                    "Nothing. Every model the packs point at was found and read.",
+                    GuiTheme.GOOD, false));
+            return;
+        }
+        // The whole heading is the fold control, the way the set headings are.
+        rows.add(new HomeRow((warningsOpen ? "\u25BE" : "\u25B8")
+                + "  WHAT IS WRONG  (" + total + ")",
+                GuiTheme.TEXT_WARN, false, () -> {
+            warningsOpen = !warningsOpen;
+            rebuildHealth();
+        }));
+        if (!warningsOpen) {
+            return;
+        }
+        List<String> warnings = report.warnings();
+        // Bounded: a pack can raise thousands, and a screen listing them all is
+        // a screen nobody reads.
+        int shown = Math.min(warnings.size(), HOME_WARNINGS);
+        for (int i = 0; i < shown; i++) {
+            rows.add(new HomeRow(warnings.get(i), GuiTheme.TEXT_WARN, false));
+        }
+        if (total > shown) {
+            rows.add(new HomeRow("and " + (total - shown) + " more, in the log",
+                    GuiTheme.TEXT_MUTED, false));
+        }
     }
 
     /**
@@ -1801,19 +1989,6 @@ public final class CatalogueScreen extends Screen {
                 + "Esc  close      Right-click a card  add to a set",
                 GuiTheme.TEXT_DIM, false));
         rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("APPEARANCE", 0, true));
-        rows.add(new HomeRow(String.format("Primary colour   \u2014   #%06X   "
-                        + "(selection, focus, the active tab)", GuiTheme.primary()),
-                GuiTheme.TEXT_BRIGHT, false, this::openPrimaryPicker));
-        rows.add(new HomeRow(String.format("Secondary colour   \u2014   #%06X   "
-                        + "(panels, cards and the inventory, darkened from this)",
-                        GuiTheme.secondary()),
-                GuiTheme.TEXT_BRIGHT, false, this::openSecondaryPicker));
-        rows.add(new HomeRow("Start from a ready-made pair", GuiTheme.TEXT_DIM, false,
-                this::openPaletteMenu));
-
-        rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("THE SCAN", 0, true));
         if (report.isRunning()) {
             rows.add(new HomeRow(report.phase().label() + "...", GuiTheme.ACCENT_BLUE, false));
@@ -1844,29 +2019,6 @@ public final class CatalogueScreen extends Screen {
                     ignored ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_DIM, false));
         }
 
-        List<String> warnings = report.warnings();
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("WHAT IS WRONG  (" + warnings.size() + ")", 0, true));
-        if (warnings.isEmpty()) {
-            rows.add(new HomeRow(
-                    "Nothing. Every model the packs point at was found and read.",
-                    GuiTheme.GOOD, false));
-        }
-        // Bounded: a pack can raise thousands, and a screen listing them all is
-        // a screen nobody reads.
-        int shown = Math.min(warnings.size(), HOME_WARNINGS);
-        for (int i = 0; i < shown; i++) {
-            rows.add(new HomeRow(warnings.get(i), GuiTheme.TEXT_WARN, false));
-        }
-        if (warnings.size() > shown) {
-            rows.add(new HomeRow("and " + (warnings.size() - shown) + " more, in the log",
-                    GuiTheme.TEXT_MUTED, false));
-        }
-
-        rows.add(new HomeRow("", 0, false));
-        rows.add(new HomeRow("ITEM ATLAS", 0, true));
-        addAtlasRows(rows);
-        addNamespaceRows(rows);
 
         rows.add(new HomeRow("", 0, false));
         rows.add(new HomeRow("RESOURCE PACKS", 0, true));
@@ -1990,7 +2142,7 @@ public final class CatalogueScreen extends Screen {
                     ignored ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_DIM, false, () -> {
                 config.toggleIgnoredNamespace(namespace);
                 namespacesChanged = true;
-                rebuildHome();
+                rebuild();
             }));
         }
         // Something excluded contributes nothing to the atlas any more, so it
@@ -2010,7 +2162,7 @@ public final class CatalogueScreen extends Screen {
                     GuiTheme.TEXT_MUTED, false, () -> {
                 config.toggleIgnoredNamespace(namespace);
                 namespacesChanged = true;
-                rebuildHome();
+                rebuild();
             }));
         }
         if (namespacesChanged) {
@@ -2112,16 +2264,11 @@ public final class CatalogueScreen extends Screen {
                 hover ? GuiTheme.TEXT_HEADING : GuiTheme.TEXT_DIM, false);
         hits.add(new Hit(left, y, backWidth, 15, () -> {
             lookAlike = null;
-            lookAlikeOf = "";
+            lookAlikeSaid = "";
             page = 0;
             rebuild();
         }));
-        int count = lookAlike.size() - 1;
-        String said = count <= 0
-                ? "Nothing else looks like " + lookAlikeOf
-                : count + (count == 1 ? " other looks" : " others look")
-                        + " like " + lookAlikeOf;
-        GuiTheme.text(graphics, this.font, said, left + backWidth + 8, y + 4,
+        GuiTheme.text(graphics, this.font, lookAlikeSaid, left + backWidth + 8, y + 4,
                 GuiTheme.TEXT_MUTED, false);
     }
 
@@ -2542,11 +2689,11 @@ public final class CatalogueScreen extends Screen {
             reason = "Click a setting to change it. Every one is saved as you go.";
             reasonColour = GuiTheme.TEXT_MUTED;
         } else if (tab == Tab.HEALTH) {
-            reason = "Models the definitions ask for that no enabled pack ships.   "
+            reason = "What the packs are missing, and what the scan complained about.   "
                     + "R rescan";
             reasonColour = GuiTheme.TEXT_MUTED;
         } else if (tab == Tab.HOME) {
-            reason = "What the packs contain and what is wrong with them.   "
+            reason = "How to use the mod, and what the packs contain.   "
                     + "R rescan";
             reasonColour = GuiTheme.TEXT_DIM;
         } else {
@@ -3297,9 +3444,22 @@ public final class CatalogueScreen extends Screen {
 
     @Override
     public void tick() {
-        if (tab == Tab.HOME && index.report().isRunning()) {
-            // A scan in progress changes what this page says every tick.
-            rebuildHome();
+        if (index.report().isRunning()) {
+            // A scan in progress changes what these pages say every tick. Only
+            // the page being looked at is rebuilt: the settings page is the one
+            // of the three a scan tells nothing new.
+            if (tab == Tab.HOME) {
+                rebuildHome();
+            } else if (tab == Tab.HEALTH) {
+                rebuildHealth();
+            }
+        }
+        // The colour pass runs on its own thread and finishes whenever it
+        // finishes. One rebuild when it does, rather than a rebuild a tick
+        // while it works.
+        if (colourWaiting && dev.custommodels.cmv.explorer.scan.SkinColours.ready(index.browsable())) {
+            colourWaiting = false;
+            rebuild();
         }
         if (searchPendingSince > 0
                 && System.currentTimeMillis() - searchPendingSince >= SEARCH_SETTLE_MILLIS) {

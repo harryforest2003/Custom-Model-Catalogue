@@ -14,6 +14,7 @@ import dev.custommodels.cmv.explorer.res.ModelJson;
 import dev.custommodels.cmv.explorer.res.ModelResolver;
 import dev.custommodels.cmv.explorer.res.ResolvedModel;
 import dev.custommodels.cmv.explorer.res.ResourceSource;
+import dev.custommodels.cmv.explorer.scan.SkinColours;
 import dev.custommodels.cmv.wrap.WrapCatalogue;
 import dev.custommodels.cmv.wrap.WrapTarget;
 
@@ -77,6 +78,7 @@ public final class ExplorerTest {
         textureNamespaceTests();
         whatLooksLikeThis();
         whatThePacksAreMissing();
+        whatColourIsThis();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -2306,6 +2308,86 @@ public final class ExplorerTest {
                 ExplorerQuery.alike(models, null).isEmpty());
         check("and no index to search leaves just the subject",
                 ExplorerQuery.alike(null, swordBlue).size() == 1);
+    }
+
+    /**
+     * What colour the filter says a texture is.
+     *
+     * <p>The case that would be silent is transparency. An item texture is
+     * mostly empty — a sword is a diagonal line across a blank square — and a
+     * reader that counted the empty pixels would file every model in the pack
+     * under black and the filter would look broken in a way nobody could
+     * explain.</p>
+     */
+    private static void whatColourIsThis() {
+        header("Colours");
+
+        int clear = 0x00000000;
+        int red = 0xFFD02020;
+        check("a mostly empty texture is the colour of what is in it",
+                SkinColours.familyOf(SkinColours.averageOf(new int[]{
+                        clear, clear, clear, clear, clear, clear, clear, red}))
+                        == SkinColours.Family.RED);
+        check("an empty texture has no colour at all, rather than black",
+                SkinColours.averageOf(new int[]{clear, clear, clear}) == -1);
+        check("and no colour is not a family",
+                SkinColours.familyOf(-1) == SkinColours.Family.ANY);
+        check("nothing to read is no colour", SkinColours.averageOf(new int[0]) == -1
+                && SkinColours.averageOf(null) == -1);
+
+        // Alpha weights the average: a faint white edge should not wash out
+        // the solid middle.
+        int faintWhite = 0x30FFFFFF;
+        int solidBlack = 0xFF000000;
+        int averaged = SkinColours.averageOf(new int[]{faintWhite, solidBlack});
+        check("a faint pixel counts for less than a solid one",
+                ((averaged >> 16) & 0xFF) < 70);
+
+        check("pure red is red", SkinColours.familyOf(0xFF0000) == SkinColours.Family.RED);
+        check("pure green is green", SkinColours.familyOf(0x00FF00) == SkinColours.Family.GREEN);
+        check("pure blue is blue", SkinColours.familyOf(0x0000FF) == SkinColours.Family.BLUE);
+        check("cyan is its own answer",
+                SkinColours.familyOf(0x00D0D0) == SkinColours.Family.CYAN);
+        check("violet is purple",
+                SkinColours.familyOf(0x8010E0) == SkinColours.Family.PURPLE);
+        check("magenta is pink",
+                SkinColours.familyOf(0xFF20C0) == SkinColours.Family.PINK);
+        check("gold is yellow",
+                SkinColours.familyOf(0xE8D020) == SkinColours.Family.YELLOW);
+
+        check("near-white is white", SkinColours.familyOf(0xF2F4F2) == SkinColours.Family.WHITE);
+        check("near-black is black", SkinColours.familyOf(0x0A0C0A) == SkinColours.Family.BLACK);
+        check("mid grey is grey", SkinColours.familyOf(0x8A8A8A) == SkinColours.Family.GREY);
+        // The rule that makes the filter usable: a neutral with a cast is a
+        // neutral. Stone and iron are faintly warm and are not red.
+        check("a warm grey is still grey",
+                SkinColours.familyOf(0x8F8A86) == SkinColours.Family.GREY);
+
+        // Orange and brown share a hue and are split on darkness and dullness,
+        // or every leather and wooden texture files under orange.
+        check("a bright orange is orange",
+                SkinColours.familyOf(0xFF8C10) == SkinColours.Family.ORANGE);
+        check("a dark dull one is brown",
+                SkinColours.familyOf(0x6B4A2A) == SkinColours.Family.BROWN);
+
+        java.util.Map<String, Integer> colours = new java.util.HashMap<>();
+        colours.put("p:blue", 0x2040C0);
+        colours.put("p:also_blue", 0x2848D0);
+        check("two slots of one colour average to it",
+                SkinColours.familyOfTextures(List.of("p:blue", "p:also_blue"), colours)
+                        == SkinColours.Family.BLUE);
+        check("a texture nobody has read yet leaves the model unfiled",
+                SkinColours.familyOfTextures(List.of("p:unread"), colours)
+                        == SkinColours.Family.ANY);
+        check("and so does asking about nothing",
+                SkinColours.familyOfTextures(List.of(), colours) == SkinColours.Family.ANY
+                        && SkinColours.familyOfTextures(null, colours)
+                                == SkinColours.Family.ANY);
+
+        // ANY is the one family that never narrows anything.
+        List<String> three = List.of("a", "b", "c");
+        check("filtering on any colour is not filtering",
+                SkinColours.keep(three, SkinColours.Family.ANY, s -> null) == three);
     }
 
     private static List<LogicalModel> build(MemorySource source, String item, String json) {
