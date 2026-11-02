@@ -2331,16 +2331,19 @@ public final class ExplorerTest {
                 "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
                         + "\"minecraft:custom_model_data\",\"cases\":["
                         + crowdCases + "]}}");
-        check("a crowd of models is read as a crowd",
-                crowded.size() > ExplorerQuery.MOST_ALIKE);
-        check("and the answer is a shortlist rather than the pack",
+        check("a crowd of models is read as a crowd", crowded.size() == 140);
+        // A hundred and forty models with one shape between them are one
+        // shape. The answer used to stop at a round number, which hid most of
+        // every real family; a tier is offered whole and the rules about what
+        // counts as a family are what keep it honest.
+        check("a group is offered whole rather than cut off at a number",
                 ExplorerQuery.alike(crowded, crowded.get(0)).size()
-                        == ExplorerQuery.MOST_ALIKE + 1);
+                        == crowded.size());
 
         // A texture half the pack draws with is a palette, not a family sheet.
         MemorySource palette = new MemorySource();
         StringBuilder paletteCases = new StringBuilder();
-        int wide = ExplorerQuery.FAMILY_SIZE + 10;
+        int wide = ExplorerQuery.FAMILY_FLOOR + 10;
         for (int i = 0; i < wide; i++) {
             // Each in its own folder and its own shape, sharing one sheet.
             palette.model("p:item/p" + i + "/m", "{\"elements\":" + boxOf(i)
@@ -2358,7 +2361,7 @@ public final class ExplorerTest {
                         + "\"minecraft:custom_model_data\",\"cases\":["
                         + paletteCases + "]}}");
         check("a sheet most of the pack draws with is a palette, not a family",
-                shared.size() > ExplorerQuery.FAMILY_SIZE
+                shared.size() > ExplorerQuery.familyCeiling(shared.size())
                         && ExplorerQuery.alike(shared, shared.get(0)).size() == 1);
 
         // ---- the name, which is what works on a real pack --------------
@@ -2391,7 +2394,60 @@ public final class ExplorerTest {
                 ofBear.stream().noneMatch(id -> id.endsWith("lucky_gemstone")));
         check("short words and dates are not words",
                 !ExplorerQuery.tokensOf(bear).contains("p")
-                        && ExplorerQuery.tokensOf(bear).contains("plushie"));
+                        && ExplorerQuery.tokensOf(bear).contains("plush"));
+
+        // ---- one family, three spellings -------------------------------
+        // The pack writes plush, plushie and plushies across one family of
+        // toys. Read literally that is three families, each too small to be
+        // the one anybody is pointing at.
+        MemorySource spelling = new MemorySource();
+        String[] spelt = {"a/bear_plush", "b/cat_plushie", "c/dog_plushies"};
+        StringBuilder spellCases = new StringBuilder();
+        for (int i = 0; i < spelt.length; i++) {
+            spelling.model("p:item/" + spelt[i], "{\"elements\":" + boxOf(i)
+                    + ",\"textures\":{\"all\":\"p:s" + i
+                    + "\",\"extra\":\"p:s" + i + "x\"}}");
+            spelling.texture("p:s" + i, 16, 16);
+            spelling.texture("p:s" + i + "x", 16, 16);
+            spellCases.append(i == 0 ? "" : ",")
+                    .append("{\"when\":\"s").append(i)
+                    .append("\",\"model\":{\"type\":\"minecraft:model\",")
+                    .append("\"model\":\"p:item/").append(spelt[i]).append("\"}}");
+        }
+        List<LogicalModel> spellings = build(spelling, "minecraft:paper",
+                "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
+                        + "\"minecraft:custom_model_data\",\"cases\":["
+                        + spellCases + "]}}");
+        java.util.Set<String> ofPlush =
+                ExplorerQuery.alike(spellings, pick(spellings, "bear_plush"));
+        check("a plural spelling does not start a second family",
+                ofPlush.stream().anyMatch(id -> id.endsWith("cat_plushie"))
+                        && ofPlush.stream().anyMatch(id -> id.endsWith("dog_plushies")));
+        check("and all three spellings are the one word",
+                ExplorerQuery.tokensOf(pick(spellings, "dog_plushies")).contains("plush")
+                        && ExplorerQuery.tokensOf(pick(spellings, "cat_plushie"))
+                                .contains("plush"));
+
+        // ---- how big a family may be is a share, not a count -----------
+        // The same family of sixty-two, in two packs of different sizes. A
+        // flat ceiling of sixty called it vocabulary in both, which is how
+        // the plushes - 285 of 11,363 models, and the whole point of the
+        // tier - came back as nothing at all.
+        check("the ceiling follows the index", ExplorerQuery.familyCeiling(11363) == 1136
+                && ExplorerQuery.familyCeiling(5000) == 500
+                && ExplorerQuery.familyCeiling(70) == ExplorerQuery.FAMILY_FLOOR);
+
+        int kin = 62;
+        check("a family too big for the floor alone", kin > ExplorerQuery.FAMILY_FLOOR);
+        List<LogicalModel> alone = sameWord(kin, 0);
+        check("in a pack of its own size it is most of the pack",
+                alone.size() == kin
+                        && ExplorerQuery.alike(alone, alone.get(0)).size() == 1);
+        List<LogicalModel> amongst = sameWord(kin, 568);
+        check("in a pack ten times the size it is a family",
+                amongst.size() == kin + 568
+                        && ExplorerQuery.alike(amongst, pick(amongst, "plushie_toy0"))
+                                .size() == kin);
 
         // ---- the drawer: one rule for words and folders alike -----------
         // Everything in this pack is filed under blockbench/ and a tenth of it
@@ -2399,7 +2455,7 @@ public final class ExplorerTest {
         // this" with the pack.
         MemorySource drawer = new MemorySource();
         StringBuilder drawerCases = new StringBuilder();
-        int lots = ExplorerQuery.FAMILY_SIZE + 10;
+        int lots = ExplorerQuery.FAMILY_FLOOR + 10;
         for (int i = 0; i < lots; i++) {
             drawer.model("p:item/drawer/decor_piece" + i, "{\"elements\":" + boxOf(i)
                     + ",\"textures\":{\"all\":\"p:d" + i
@@ -2416,9 +2472,35 @@ public final class ExplorerTest {
                         + "\"minecraft:custom_model_data\",\"cases\":["
                         + drawerCases + "]}}");
         check("a drawer of models is read as a drawer",
-                drawerful.size() > ExplorerQuery.FAMILY_SIZE);
+                drawerful.size() > ExplorerQuery.familyCeiling(drawerful.size()));
         check("so neither the word nor the folder they share is a family",
                 ExplorerQuery.alike(drawerful, drawerful.get(0)).size() == 1);
+    }
+
+    /**
+     * A pack of {@code kin} models sharing one word, plus {@code filler}
+     * models sharing nothing, each model in a folder of its own so that only
+     * the name can bind them.
+     */
+    private static List<LogicalModel> sameWord(int kin, int filler) {
+        MemorySource source = new MemorySource();
+        StringBuilder cases = new StringBuilder();
+        for (int i = 0; i < kin + filler; i++) {
+            String name = i < kin ? "g" + i + "/plushie_toy" + i : "f" + i + "/x" + i;
+            source.model("p:item/" + name, "{\"elements\":" + boxOf(i)
+                    + ",\"textures\":{\"all\":\"p:w" + i
+                    + "\",\"extra\":\"p:w" + i + "x\"}}");
+            source.texture("p:w" + i, 16, 16);
+            source.texture("p:w" + i + "x", 16, 16);
+            cases.append(i == 0 ? "" : ",")
+                    .append("{\"when\":\"w").append(i)
+                    .append("\",\"model\":{\"type\":\"minecraft:model\",")
+                    .append("\"model\":\"p:item/").append(name).append("\"}}");
+        }
+        return build(source, "minecraft:paper",
+                "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
+                        + "\"minecraft:custom_model_data\",\"cases\":["
+                        + cases + "]}}");
     }
 
     /** A single cuboid with its own dimensions, so each model hashes apart. */

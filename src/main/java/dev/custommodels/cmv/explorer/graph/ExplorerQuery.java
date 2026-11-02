@@ -46,18 +46,20 @@ public record ExplorerQuery(String text,
                             boolean onlyRealItems) {
 
     /**
-     * The models that look like a given one, closest first, as a shortlist.
+     * The models that look like a given one, closest first.
      *
      * <p>Six tiers. Order is the answer's confidence, so an exact match is
-     * never buried among the guesses.</p>
+     * never buried among the guesses. A tier is offered whole: everything in
+     * the group comes back, because a family of three hundred is still a
+     * family and cutting it off at an arbitrary number hid most of it.</p>
      *
      * <ol>
      *   <li><b>The same shape.</b> Identical geometry hash.</li>
      *   <li><b>The same textures.</b> Identical texture hash.</li>
      *   <li><b>The same template.</b> Both inherit one of the pack's own
      *       parent models.</li>
-     *   <li><b>A name in common.</b> They share a word that few other models
-     *       use \u2014 rarest word first.</li>
+     *   <li><b>A name in common.</b> They share a word that is not the whole
+     *       pack's vocabulary \u2014 most words shared first, then rarest.</li>
      *   <li><b>The same folder</b>, where the folder is a folder and not the
      *       place the pack puts everything.</li>
      *   <li><b>A shared sheet</b>, where the sheet is not the pack's palette.</li>
@@ -69,24 +71,27 @@ public record ExplorerQuery(String text,
      * against 15: the elf's hat alone makes it twice as tall as the other, so
      * no measurement of the geometry puts them together, and the first three
      * tiers put them nowhere near each other. What they share is the word
-     * <em>plushie</em>, which 30 of that pack's 5,086 models carry. The pack
-     * author grouped them by naming them, which is what pack authors do.</p>
+     * <em>plush</em>. The pack author grouped them by naming them, which is
+     * what pack authors do.</p>
      *
-     * <p>Every loose tier is then held to one rule: a group of more than
-     * {@value #FAMILY_SIZE} is a category rather than a family, and says
-     * nothing. In the pack this was measured against, that admits
-     * <em>plushie</em> (30) and <em>lucky</em> (42) while excluding
-     * <em>decor</em> (423), <em>shield</em> (252) and <em>sword</em> (242). It
-     * is the same rule that stops a shared palette counting as a shared sheet,
-     * and the same rule that stopped the folder tier matching the entire pack:
-     * every model there is filed under {@code blockbench/}, so "same folder"
-     * meant "same pack" and the answer was a hundred and ten pages of
-     * whatever happened to be indexed first.</p>
+     * <p>How big a group may be is a share of what is indexed, not a count:
+     * a word or folder covering more than a tenth of the index is the pack's
+     * vocabulary and binds nothing, with {@value #FAMILY_FLOOR} as the floor
+     * so a small pack still has families. A count was wrong, and wrong in a
+     * way only the real thing showed. Measured across the two packs this was
+     * built against \u2014 11,363 models \u2014 the groups worth having are
+     * <em>plush</em> (285, 2.5%), the author's own {@code plushies/} folder
+     * (211, 1.9%), <em>sword</em> (354) and <em>decor</em> (423, 3.7%), while
+     * what has to be refused is {@code blockbench/} (4,949, <b>43.6%</b>) and
+     * {@code number/base} (1,390, <b>12.2%</b>). Nothing sits between 3.7%
+     * and 12.2%, so the line is drawn in the gap. The old ceiling of sixty
+     * was below every one of those numbers: it refused the plushes for being
+     * a family of 285, which is the complaint that produced this.</p>
      *
-     * <p>Words are at least four letters and carry no digits, so dates and
-     * numbering do not bind a family together. The answer is capped at
-     * {@value #MOST_ALIKE}, taking the tiers in order, so what is dropped is
-     * always the weakest evidence.</p>
+     * <p>Words are at least four letters, carry no digits, and lose a
+     * trailing plural so that <em>plush</em>, <em>plushie</em> and
+     * <em>plushies</em> are one word rather than three families. Dates and
+     * numbering bind nothing.</p>
      *
      * <p>The subject leads the list rather than being left out of it: the
      * question is nearly always "which of these did I mean".</p>
@@ -134,10 +139,11 @@ public record ExplorerQuery(String text,
                 words.computeIfPresent(word, (key, seen) -> seen + 1);
             }
         }
-        words.values().removeIf(seen -> seen > FAMILY_SIZE);
-        sheetUse.values().removeIf(seen -> seen > FAMILY_SIZE);
+        int ceiling = familyCeiling(all.size());
+        words.values().removeIf(seen -> seen > ceiling);
+        sheetUse.values().removeIf(seen -> seen > ceiling);
         java.util.Set<String> familySheets = sheetUse.keySet();
-        boolean folderMeansSomething = !folder.isEmpty() && inFolder <= FAMILY_SIZE;
+        boolean folderMeansSomething = !folder.isEmpty() && inFolder <= ceiling;
 
         java.util.List<String> sameShape = new java.util.ArrayList<>();
         java.util.List<String> sameTextures = new java.util.ArrayList<>();
@@ -167,14 +173,18 @@ public record ExplorerQuery(String text,
                 continue;
             }
             int rarest = Integer.MAX_VALUE;
+            int shared = 0;
             for (String word : tokensOf(model)) {
                 Integer seen = words.get(word);
-                if (seen != null && seen < rarest) {
-                    rarest = seen;
+                if (seen != null) {
+                    shared++;
+                    if (seen < rarest) {
+                        rarest = seen;
+                    }
                 }
             }
-            if (rarest < Integer.MAX_VALUE) {
-                sameName.add(new Named(other, rarest));
+            if (shared > 0) {
+                sameName.add(new Named(other, shared, rarest));
                 continue;
             }
             if (folderMeansSomething && folder.equals(folderOf(model))) {
@@ -185,40 +195,61 @@ public record ExplorerQuery(String text,
                 sharedSheet.add(other);
             }
         }
-        // The rarer the shared word, the likelier it names a family rather
-        // than a kind of thing.
-        sameName.sort(java.util.Comparator.comparingInt(Named::rarity));
+        // Sharing more of the name is the better match, and between two that
+        // share as much, the rarer word is the likelier family. The gift
+        // plushes share both words with the elf and lead its answer; the rest
+        // of the plushes share one and follow them.
+        sameName.sort(java.util.Comparator.<Named>comparingInt(Named::shared).reversed()
+                .thenComparingInt(Named::rarity));
 
-        addUpToTheCap(out, sameShape);
-        addUpToTheCap(out, sameTextures);
-        addUpToTheCap(out, sameTemplate);
+        out.addAll(sameShape);
+        out.addAll(sameTextures);
+        out.addAll(sameTemplate);
         for (Named named : sameName) {
-            if (out.size() > MOST_ALIKE) {
-                break;
-            }
             out.add(named.id());
         }
-        addUpToTheCap(out, sameFolder);
-        addUpToTheCap(out, sharedSheet);
+        out.addAll(sameFolder);
+        out.addAll(sharedSheet);
         return out;
     }
 
-    /** A look-alike found by name, and how rare the word they share is. */
-    private record Named(String id, int rarity) {
+    /**
+     * A look-alike found by name: how many words it shares with the subject,
+     * and how rare the rarest of them is.
+     */
+    private record Named(String id, int shared, int rarity) {
     }
 
-    /** The most look-alikes worth offering before it stops being an answer. */
-    public static final int MOST_ALIKE = 120;
+    /**
+     * The smallest a family may be allowed to be, whatever the index size.
+     *
+     * <p>Without a floor, a pack of forty models would allow families of
+     * four, and a pack that small has no vocabulary to confuse with one.</p>
+     */
+    public static final int FAMILY_FLOOR = 60;
 
     /**
-     * Past this, a group is a category rather than a family.
+     * A group bigger than this share of the index is vocabulary, not a family.
      *
-     * <p>One number for folders, texture sheets and words alike, because it is
-     * one idea: a thing five hundred models have in common is what kind of
-     * thing they are, and saying those five hundred look alike is true and
-     * useless.</p>
+     * <p>A tenth. See {@link #alike} for the measurements it was chosen
+     * from: everything worth keeping was under 4% of the index and everything
+     * that had to be refused was over 12%.</p>
      */
-    public static final int FAMILY_SIZE = 60;
+    public static final int FAMILY_SHARE = 10;
+
+    /**
+     * The largest group that still means something, for an index this big.
+     *
+     * <p>One number for folders, texture sheets and words alike, because it
+     * is one idea: a thing most of the pack has in common is what kind of
+     * thing it is, and saying most of the pack looks alike is true and
+     * useless. What changed is the unit \u2014 a share of what is indexed
+     * rather than a count, because a count that suits a pack of two hundred
+     * refuses every real family in a pack of eleven thousand.</p>
+     */
+    public static int familyCeiling(int indexed) {
+        return Math.max(FAMILY_FLOOR, indexed / FAMILY_SHARE);
+    }
 
     /**
      * The words in a model's own file name.
@@ -227,6 +258,12 @@ public record ExplorerQuery(String text,
      * runs of letters of four or more. Digits are dropped with the words that
      * contain them, so {@code 2024dec} and {@code plushie_2} do not bind
      * anything together \u2014 a date is not a family and neither is a number.</p>
+     *
+     * <p>A trailing plural is dropped, so a pack that writes <em>plush</em>,
+     * <em>plushie</em> and <em>plushies</em> across one family of toys has
+     * named one family and not three. Only the ending comes off: a word is
+     * never matched as a substring of another, or every sword would be a
+     * relative of every swordfish.</p>
      */
     public static java.util.Set<String> tokensOf(LogicalModel model) {
         if (model == null) {
@@ -250,7 +287,7 @@ public record ExplorerQuery(String text,
                 continue;
             }
             if (!spoiled && word.length() >= 4) {
-                out.add(word.toString());
+                out.add(stem(word.toString()));
             }
             word.setLength(0);
             spoiled = false;
@@ -258,16 +295,24 @@ public record ExplorerQuery(String text,
         return out;
     }
 
-    private static void addUpToTheCap(java.util.Set<String> out, java.util.List<String> tier) {
-        for (String id : tier) {
-            // Counted past the subject, which is already in the set and is not
-            // one of its own look-alikes.
-            if (out.size() > MOST_ALIKE) {
-                return;
+    /**
+     * A word with its plural ending removed, where something is left of it.
+     *
+     * <p>Four letters have to survive, so {@code dies} does not become
+     * {@code d} and the rule cannot turn a short word into a prefix that
+     * matches half the pack.</p>
+     */
+    private static String stem(String word) {
+        for (String ending : PLURALS) {
+            if (word.length() - ending.length() >= 4 && word.endsWith(ending)) {
+                return word.substring(0, word.length() - ending.length());
             }
-            out.add(id);
         }
+        return word;
     }
+
+    /** Longest first, so {@code plushies} loses {@code ies} and not {@code s}. */
+    private static final String[] PLURALS = {"ies", "ie", "es", "s", "y"};
 
     /**
      * The pack's own template a model inherits from, or {@code ""} for none.
