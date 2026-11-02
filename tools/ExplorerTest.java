@@ -2340,7 +2340,7 @@ public final class ExplorerTest {
         // A texture half the pack draws with is a palette, not a family sheet.
         MemorySource palette = new MemorySource();
         StringBuilder paletteCases = new StringBuilder();
-        int wide = ExplorerQuery.SHEET_FAMILY + 10;
+        int wide = ExplorerQuery.FAMILY_SIZE + 10;
         for (int i = 0; i < wide; i++) {
             // Each in its own folder and its own shape, sharing one sheet.
             palette.model("p:item/p" + i + "/m", "{\"elements\":" + boxOf(i)
@@ -2357,12 +2357,68 @@ public final class ExplorerTest {
                 "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
                         + "\"minecraft:custom_model_data\",\"cases\":["
                         + paletteCases + "]}}");
-        check("the palette is read as widely used",
-                shared.size() > ExplorerQuery.SHEET_FAMILY
-                        && !ExplorerQuery.familySheets(shared, shared.get(0))
-                                .contains("p:palette"));
-        check("so sharing it is not a family",
-                ExplorerQuery.alike(shared, shared.get(0)).size() == 1);
+        check("a sheet most of the pack draws with is a palette, not a family",
+                shared.size() > ExplorerQuery.FAMILY_SIZE
+                        && ExplorerQuery.alike(shared, shared.get(0)).size() == 1);
+
+        // ---- the name, which is what works on a real pack --------------
+        // Measured on one: two plushes a player called obviously similar had
+        // bounding boxes of 10x25x16 and 9x12x10, so nothing about the
+        // geometry puts them together. What they shared was the word.
+        MemorySource zoo = new MemorySource();
+        zoo.model("p:item/zoo/green_plushie_bear", "{\"elements\":" + boxOf(1)
+                + ",\"textures\":{\"all\":\"p:bear\",\"extra\":\"p:bear2\"}}");
+        zoo.model("p:item/pens/plushie_charles", "{\"elements\":" + boxOf(2)
+                + ",\"textures\":{\"all\":\"p:chas\",\"extra\":\"p:chas2\"}}");
+        zoo.model("p:item/gems/lucky_gemstone", "{\"elements\":" + boxOf(3)
+                + ",\"textures\":{\"all\":\"p:gem\",\"extra\":\"p:gem2\"}}");
+        for (String texture : new String[]{"p:bear", "p:bear2", "p:chas", "p:chas2",
+                "p:gem", "p:gem2"}) {
+            zoo.texture(texture, 16, 16);
+        }
+        List<LogicalModel> zoos = build(zoo, "minecraft:paper", """
+                {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
+                  "cases":[
+                    {"when":"a","model":{"type":"minecraft:model","model":"p:item/zoo/green_plushie_bear"}},
+                    {"when":"b","model":{"type":"minecraft:model","model":"p:item/pens/plushie_charles"}},
+                    {"when":"c","model":{"type":"minecraft:model","model":"p:item/gems/lucky_gemstone"}}]}}
+                """);
+        LogicalModel bear = pick(zoos, "green_plushie_bear");
+        java.util.Set<String> ofBear = ExplorerQuery.alike(zoos, bear);
+        check("a word in common makes a family across folders",
+                ofBear.stream().anyMatch(id -> id.endsWith("plushie_charles")));
+        check("and one sharing no word is not in it",
+                ofBear.stream().noneMatch(id -> id.endsWith("lucky_gemstone")));
+        check("short words and dates are not words",
+                !ExplorerQuery.tokensOf(bear).contains("p")
+                        && ExplorerQuery.tokensOf(bear).contains("plushie"));
+
+        // ---- the drawer: one rule for words and folders alike -----------
+        // Everything in this pack is filed under blockbench/ and a tenth of it
+        // is called decor. Either, read as a family, answers "what looks like
+        // this" with the pack.
+        MemorySource drawer = new MemorySource();
+        StringBuilder drawerCases = new StringBuilder();
+        int lots = ExplorerQuery.FAMILY_SIZE + 10;
+        for (int i = 0; i < lots; i++) {
+            drawer.model("p:item/drawer/decor_piece" + i, "{\"elements\":" + boxOf(i)
+                    + ",\"textures\":{\"all\":\"p:d" + i
+                    + "\",\"extra\":\"p:d" + i + "\"}}");
+            drawer.texture("p:d" + i, 16, 16);
+            drawerCases.append(i == 0 ? "" : ",")
+                    .append("{\"when\":\"d").append(i)
+                    .append("\",\"model\":{\"type\":\"minecraft:model\",")
+                    .append("\"model\":\"p:item/drawer/decor_piece").append(i)
+                    .append("\"}}");
+        }
+        List<LogicalModel> drawerful = build(drawer, "minecraft:paper",
+                "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
+                        + "\"minecraft:custom_model_data\",\"cases\":["
+                        + drawerCases + "]}}");
+        check("a drawer of models is read as a drawer",
+                drawerful.size() > ExplorerQuery.FAMILY_SIZE);
+        check("so neither the word nor the folder they share is a family",
+                ExplorerQuery.alike(drawerful, drawerful.get(0)).size() == 1);
     }
 
     /** A single cuboid with its own dimensions, so each model hashes apart. */

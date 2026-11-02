@@ -48,51 +48,48 @@ public record ExplorerQuery(String text,
     /**
      * The models that look like a given one, closest first, as a shortlist.
      *
-     * <p>Five tiers, in this order, because "similar" is not one question and
-     * the honest answers to it are of very different strengths. Order is the
-     * answer's confidence, so an exact match is never buried among guesses.</p>
+     * <p>Six tiers. Order is the answer's confidence, so an exact match is
+     * never buried among the guesses.</p>
      *
      * <ol>
-     *   <li><b>The same shape.</b> Identical geometry hash: the same model
-     *       wearing another texture.</li>
-     *   <li><b>The same textures.</b> Identical texture hash: one sheet cut
-     *       into a family.</li>
+     *   <li><b>The same shape.</b> Identical geometry hash.</li>
+     *   <li><b>The same textures.</b> Identical texture hash.</li>
      *   <li><b>The same template.</b> Both inherit one of the pack's own
      *       parent models.</li>
-     *   <li><b>The same folder.</b> Both filed in the same subfolder. A pack
-     *       that puts its plushes in {@code item/plushes/} has said they belong
-     *       together, which is better evidence than any measurement.</li>
-     *   <li><b>A shared sheet.</b> They draw with a texture in common, and that
-     *       texture is not one half the pack uses.</li>
+     *   <li><b>A name in common.</b> They share a word that few other models
+     *       use \u2014 rarest word first.</li>
+     *   <li><b>The same folder</b>, where the folder is a folder and not the
+     *       place the pack puts everything.</li>
+     *   <li><b>A shared sheet</b>, where the sheet is not the pack's palette.</li>
      * </ol>
      *
-     * <p>There used to be a sixth: same item type, about as many cuboids,
-     * about as many texture slots. It had to go. On a real pack it answered
-     * "what else looks like this" with a hundred and ten pages, which is not
-     * an answer \u2014 "twelve cuboids and one texture slot" describes half of
-     * everything, and a filter that matches half of everything is the same as
-     * no filter.</p>
+     * <p>The fourth tier is the one that works on a real pack, and it took
+     * measuring one to find that out. Two plushes a player called obviously
+     * similar had bounding boxes of 10x25x16 and 9x12x10 and 24 cuboids
+     * against 15: the elf's hat alone makes it twice as tall as the other, so
+     * no measurement of the geometry puts them together, and the first three
+     * tiers put them nowhere near each other. What they share is the word
+     * <em>plushie</em>, which 30 of that pack's 5,086 models carry. The pack
+     * author grouped them by naming them, which is what pack authors do.</p>
      *
-     * <p>The shared-sheet tier is held to the same standard. A texture used by
-     * hundreds of models is a palette, not a family's sheet, and matching
-     * through it was most of the flood. Only textures used by at most
-     * {@value #SHEET_FAMILY} models count as evidence of a family.</p>
+     * <p>Every loose tier is then held to one rule: a group of more than
+     * {@value #FAMILY_SIZE} is a category rather than a family, and says
+     * nothing. In the pack this was measured against, that admits
+     * <em>plushie</em> (30) and <em>lucky</em> (42) while excluding
+     * <em>decor</em> (423), <em>shield</em> (252) and <em>sword</em> (242). It
+     * is the same rule that stops a shared palette counting as a shared sheet,
+     * and the same rule that stopped the folder tier matching the entire pack:
+     * every model there is filed under {@code blockbench/}, so "same folder"
+     * meant "same pack" and the answer was a hundred and ten pages of
+     * whatever happened to be indexed first.</p>
      *
-     * <p>And the whole answer is capped at {@value #MOST_ALIKE}. A shortlist is
-     * what the question wants: past three pages nobody is comparing anything,
-     * they are browsing, and the grid already does browsing better. The cap
-     * takes the tiers in order, so what it drops is always the weakest
-     * evidence.</p>
+     * <p>Words are at least four letters and carry no digits, so dates and
+     * numbering do not bind a family together. The answer is capped at
+     * {@value #MOST_ALIKE}, taking the tiers in order, so what is dropped is
+     * always the weakest evidence.</p>
      *
-     * <p>Guards that keep the loose tiers honest: the item folder itself is not
-     * a folder signal, because a pack that files everything flat has said
-     * nothing by doing so; a vanilla parent is not a template, since every
-     * generated item shares one; and an empty hash matches nothing rather than
-     * everything.</p>
-     *
-     * <p>The subject leads the list rather than being left out of it. The
-     * question is nearly always "which of these did I mean", and that is
-     * answered by seeing it beside the others, not instead of them.</p>
+     * <p>The subject leads the list rather than being left out of it: the
+     * question is nearly always "which of these did I mean".</p>
      */
     public static java.util.Set<String> alike(java.util.List<LogicalModel> all,
                                               LogicalModel subject) {
@@ -108,12 +105,44 @@ public record ExplorerQuery(String text,
         String geometry = subject.geometryHash() == null ? "" : subject.geometryHash();
         String textures = subject.textureHash() == null ? "" : subject.textureHash();
         String template = templateOf(subject);
+
+        // One pass to find out which of this model's groups are small enough
+        // to mean anything, then one to sort the models into tiers.
+        java.util.Map<String, Integer> words = new java.util.HashMap<>();
+        for (String word : tokensOf(subject)) {
+            words.put(word, 0);
+        }
+        java.util.Set<String> sheets =
+                new java.util.HashSet<>(subject.defaultState().resolved().textureSlots().values());
+        java.util.Map<String, Integer> sheetUse = new java.util.HashMap<>();
+        for (String sheet : sheets) {
+            sheetUse.put(sheet, 0);
+        }
         String folder = folderOf(subject);
-        java.util.Set<String> sheets = familySheets(all, subject);
+        int inFolder = 0;
+        for (LogicalModel model : all) {
+            if (model == null) {
+                continue;
+            }
+            if (!folder.isEmpty() && folder.equals(folderOf(model))) {
+                inFolder++;
+            }
+            for (String textureId : model.defaultState().resolved().textureSlots().values()) {
+                sheetUse.computeIfPresent(textureId, (key, seen) -> seen + 1);
+            }
+            for (String word : tokensOf(model)) {
+                words.computeIfPresent(word, (key, seen) -> seen + 1);
+            }
+        }
+        words.values().removeIf(seen -> seen > FAMILY_SIZE);
+        sheetUse.values().removeIf(seen -> seen > FAMILY_SIZE);
+        java.util.Set<String> familySheets = sheetUse.keySet();
+        boolean folderMeansSomething = !folder.isEmpty() && inFolder <= FAMILY_SIZE;
 
         java.util.List<String> sameShape = new java.util.ArrayList<>();
         java.util.List<String> sameTextures = new java.util.ArrayList<>();
         java.util.List<String> sameTemplate = new java.util.ArrayList<>();
+        java.util.List<Named> sameName = new java.util.ArrayList<>();
         java.util.List<String> sameFolder = new java.util.ArrayList<>();
         java.util.List<String> sharedSheet = new java.util.ArrayList<>();
 
@@ -127,75 +156,117 @@ public record ExplorerQuery(String text,
             }
             if (!geometry.isEmpty() && geometry.equals(model.geometryHash())) {
                 sameShape.add(other);
-            } else if (!textures.isEmpty() && textures.equals(model.textureHash())) {
+                continue;
+            }
+            if (!textures.isEmpty() && textures.equals(model.textureHash())) {
                 sameTextures.add(other);
-            } else if (!template.isEmpty() && template.equals(templateOf(model))) {
+                continue;
+            }
+            if (!template.isEmpty() && template.equals(templateOf(model))) {
                 sameTemplate.add(other);
-            } else if (!folder.isEmpty() && folder.equals(folderOf(model))) {
+                continue;
+            }
+            int rarest = Integer.MAX_VALUE;
+            for (String word : tokensOf(model)) {
+                Integer seen = words.get(word);
+                if (seen != null && seen < rarest) {
+                    rarest = seen;
+                }
+            }
+            if (rarest < Integer.MAX_VALUE) {
+                sameName.add(new Named(other, rarest));
+                continue;
+            }
+            if (folderMeansSomething && folder.equals(folderOf(model))) {
                 sameFolder.add(other);
-            } else if (sharesASheet(sheets, model)) {
+                continue;
+            }
+            if (sharesASheet(familySheets, model)) {
                 sharedSheet.add(other);
             }
         }
+        // The rarer the shared word, the likelier it names a family rather
+        // than a kind of thing.
+        sameName.sort(java.util.Comparator.comparingInt(Named::rarity));
+
         addUpToTheCap(out, sameShape);
         addUpToTheCap(out, sameTextures);
         addUpToTheCap(out, sameTemplate);
+        for (Named named : sameName) {
+            if (out.size() > MOST_ALIKE) {
+                break;
+            }
+            out.add(named.id());
+        }
         addUpToTheCap(out, sameFolder);
         addUpToTheCap(out, sharedSheet);
         return out;
     }
 
+    /** A look-alike found by name, and how rare the word they share is. */
+    private record Named(String id, int rarity) {
+    }
+
     /** The most look-alikes worth offering before it stops being an answer. */
     public static final int MOST_ALIKE = 120;
 
-    /** Past this, a texture is a palette the pack reuses, not a family's sheet. */
-    public static final int SHEET_FAMILY = 60;
+    /**
+     * Past this, a group is a category rather than a family.
+     *
+     * <p>One number for folders, texture sheets and words alike, because it is
+     * one idea: a thing five hundred models have in common is what kind of
+     * thing they are, and saying those five hundred look alike is true and
+     * useless.</p>
+     */
+    public static final int FAMILY_SIZE = 60;
+
+    /**
+     * The words in a model's own file name.
+     *
+     * <p>The last part of the model id, cut on underscores and hyphens, keeping
+     * runs of letters of four or more. Digits are dropped with the words that
+     * contain them, so {@code 2024dec} and {@code plushie_2} do not bind
+     * anything together \u2014 a date is not a family and neither is a number.</p>
+     */
+    public static java.util.Set<String> tokensOf(LogicalModel model) {
+        if (model == null) {
+            return java.util.Set.of();
+        }
+        String id = model.defaultState().modelId();
+        int slash = id.lastIndexOf('/');
+        String name = slash < 0 ? id : id.substring(slash + 1);
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        StringBuilder word = new StringBuilder();
+        boolean spoiled = false;
+        for (int i = 0; i <= name.length(); i++) {
+            char at = i == name.length() ? '_' : Character.toLowerCase(name.charAt(i));
+            if (at >= 'a' && at <= 'z') {
+                word.append(at);
+                continue;
+            }
+            if (at >= '0' && at <= '9') {
+                // A run with a digit in it is a date or an index, not a word.
+                spoiled = true;
+                continue;
+            }
+            if (!spoiled && word.length() >= 4) {
+                out.add(word.toString());
+            }
+            word.setLength(0);
+            spoiled = false;
+        }
+        return out;
+    }
 
     private static void addUpToTheCap(java.util.Set<String> out, java.util.List<String> tier) {
         for (String id : tier) {
             // Counted past the subject, which is already in the set and is not
-            // one of its own look-alikes. Counting it in gave a cap of one
-            // fewer than the number the constant names.
+            // one of its own look-alikes.
             if (out.size() > MOST_ALIKE) {
                 return;
             }
             out.add(id);
         }
-    }
-
-    /**
-     * Which of a model's textures are narrow enough to mean something.
-     *
-     * <p>One pass over the index counting how many models draw with each of the
-     * subject's textures. A sheet two dozen models share is a family; one that
-     * four thousand share is the pack's palette, and saying those four thousand
-     * look alike is true and useless.</p>
-     */
-    public static java.util.Set<String> familySheets(java.util.List<LogicalModel> all,
-                                                     LogicalModel subject) {
-        java.util.Set<String> mine = new java.util.HashSet<>(
-                subject.defaultState().resolved().textureSlots().values());
-        if (mine.isEmpty() || all == null) {
-            return java.util.Set.of();
-        }
-        java.util.Map<String, Integer> used = new java.util.HashMap<>();
-        for (LogicalModel model : all) {
-            if (model == null) {
-                continue;
-            }
-            for (String textureId : model.defaultState().resolved().textureSlots().values()) {
-                if (mine.contains(textureId)) {
-                    used.merge(textureId, 1, Integer::sum);
-                }
-            }
-        }
-        java.util.Set<String> narrow = new java.util.HashSet<>();
-        for (java.util.Map.Entry<String, Integer> each : used.entrySet()) {
-            if (each.getValue() <= SHEET_FAMILY) {
-                narrow.add(each.getKey());
-            }
-        }
-        return narrow;
     }
 
     /**
@@ -223,12 +294,11 @@ public record ExplorerQuery(String text,
     }
 
     /**
-     * The subfolder a model is filed in, or {@code ""} when it is not in one.
+     * The folder a model is filed in, or {@code ""} when it is not in one.
      *
-     * <p>The item folder itself does not count. Everything lands there by
-     * default, so a pack that files its models flat has expressed no grouping,
-     * and reading one into it would make every model in that pack similar to
-     * every other.</p>
+     * <p>The item folder itself does not count, because everything lands there
+     * by default. Whether any other folder counts is decided by how many
+     * models are in it, which is not something this can answer on its own.</p>
      */
     public static String folderOf(LogicalModel model) {
         if (model == null) {
