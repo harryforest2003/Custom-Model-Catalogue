@@ -46,9 +46,9 @@ public record ExplorerQuery(String text,
                             boolean onlyRealItems) {
 
     /**
-     * The models that look like a given one, closest first.
+     * The models that look like a given one, closest first, as a shortlist.
      *
-     * <p>Six tiers, in this order, because "similar" is not one question and
+     * <p>Five tiers, in this order, because "similar" is not one question and
      * the honest answers to it are of very different strengths. Order is the
      * answer's confidence, so an exact match is never buried among guesses.</p>
      *
@@ -61,27 +61,34 @@ public record ExplorerQuery(String text,
      *       parent models.</li>
      *   <li><b>The same folder.</b> Both filed in the same subfolder. A pack
      *       that puts its plushes in {@code item/plushes/} has said they belong
-     *       together, and that is better evidence than any measurement of the
-     *       geometry.</li>
-     *   <li><b>A shared texture.</b> They use at least one texture file in
-     *       common, without the whole set matching.</li>
-     *   <li><b>The same build.</b> Same kind of item, about as many cuboids,
-     *       about as many texture slots. A guess, and last.</li>
+     *       together, which is better evidence than any measurement.</li>
+     *   <li><b>A shared sheet.</b> They draw with a texture in common, and that
+     *       texture is not one half the pack uses.</li>
      * </ol>
      *
-     * <p>The first three alone were too tight to be useful. They found the same
-     * model in nine colours and nothing else: a family of plushes differing by
-     * one cuboid shared no hash, no template and no exact cuboid count, so a
-     * question whose whole point is "what else is like this" answered "nothing
-     * is". Hence the folder, the partial texture match, and a tolerance on the
-     * counts rather than equality.</p>
+     * <p>There used to be a sixth: same item type, about as many cuboids,
+     * about as many texture slots. It had to go. On a real pack it answered
+     * "what else looks like this" with a hundred and ten pages, which is not
+     * an answer \u2014 "twelve cuboids and one texture slot" describes half of
+     * everything, and a filter that matches half of everything is the same as
+     * no filter.</p>
      *
-     * <p>What keeps the loose tiers from swallowing the pack: the item folder
-     * itself is not a folder signal, because a pack that files everything flat
-     * has said nothing by doing so; a vanilla parent is not a template, since
-     * every generated item shares one; and flat models are left out of the last
-     * tier entirely, a sprite's shape being its texture rather than its
-     * geometry. An empty hash matches nothing rather than everything.</p>
+     * <p>The shared-sheet tier is held to the same standard. A texture used by
+     * hundreds of models is a palette, not a family's sheet, and matching
+     * through it was most of the flood. Only textures used by at most
+     * {@value #SHEET_FAMILY} models count as evidence of a family.</p>
+     *
+     * <p>And the whole answer is capped at {@value #MOST_ALIKE}. A shortlist is
+     * what the question wants: past three pages nobody is comparing anything,
+     * they are browsing, and the grid already does browsing better. The cap
+     * takes the tiers in order, so what it drops is always the weakest
+     * evidence.</p>
+     *
+     * <p>Guards that keep the loose tiers honest: the item folder itself is not
+     * a folder signal, because a pack that files everything flat has said
+     * nothing by doing so; a vanilla parent is not a template, since every
+     * generated item shares one; and an empty hash matches nothing rather than
+     * everything.</p>
      *
      * <p>The subject leads the list rather than being left out of it. The
      * question is nearly always "which of these did I mean", and that is
@@ -102,15 +109,13 @@ public record ExplorerQuery(String text,
         String textures = subject.textureHash() == null ? "" : subject.textureHash();
         String template = templateOf(subject);
         String folder = folderOf(subject);
-        java.util.Set<String> sheets =
-                new java.util.HashSet<>(subject.defaultState().resolved().textureSlots().values());
+        java.util.Set<String> sheets = familySheets(all, subject);
 
         java.util.List<String> sameShape = new java.util.ArrayList<>();
         java.util.List<String> sameTextures = new java.util.ArrayList<>();
         java.util.List<String> sameTemplate = new java.util.ArrayList<>();
         java.util.List<String> sameFolder = new java.util.ArrayList<>();
         java.util.List<String> sharedSheet = new java.util.ArrayList<>();
-        java.util.List<String> sameBuild = new java.util.ArrayList<>();
 
         for (LogicalModel model : all) {
             if (model == null) {
@@ -130,17 +135,67 @@ public record ExplorerQuery(String text,
                 sameFolder.add(other);
             } else if (sharesASheet(sheets, model)) {
                 sharedSheet.add(other);
-            } else if (sameBuildAs(subject, model)) {
-                sameBuild.add(other);
             }
         }
-        out.addAll(sameShape);
-        out.addAll(sameTextures);
-        out.addAll(sameTemplate);
-        out.addAll(sameFolder);
-        out.addAll(sharedSheet);
-        out.addAll(sameBuild);
+        addUpToTheCap(out, sameShape);
+        addUpToTheCap(out, sameTextures);
+        addUpToTheCap(out, sameTemplate);
+        addUpToTheCap(out, sameFolder);
+        addUpToTheCap(out, sharedSheet);
         return out;
+    }
+
+    /** The most look-alikes worth offering before it stops being an answer. */
+    public static final int MOST_ALIKE = 120;
+
+    /** Past this, a texture is a palette the pack reuses, not a family's sheet. */
+    public static final int SHEET_FAMILY = 60;
+
+    private static void addUpToTheCap(java.util.Set<String> out, java.util.List<String> tier) {
+        for (String id : tier) {
+            // Counted past the subject, which is already in the set and is not
+            // one of its own look-alikes. Counting it in gave a cap of one
+            // fewer than the number the constant names.
+            if (out.size() > MOST_ALIKE) {
+                return;
+            }
+            out.add(id);
+        }
+    }
+
+    /**
+     * Which of a model's textures are narrow enough to mean something.
+     *
+     * <p>One pass over the index counting how many models draw with each of the
+     * subject's textures. A sheet two dozen models share is a family; one that
+     * four thousand share is the pack's palette, and saying those four thousand
+     * look alike is true and useless.</p>
+     */
+    public static java.util.Set<String> familySheets(java.util.List<LogicalModel> all,
+                                                     LogicalModel subject) {
+        java.util.Set<String> mine = new java.util.HashSet<>(
+                subject.defaultState().resolved().textureSlots().values());
+        if (mine.isEmpty() || all == null) {
+            return java.util.Set.of();
+        }
+        java.util.Map<String, Integer> used = new java.util.HashMap<>();
+        for (LogicalModel model : all) {
+            if (model == null) {
+                continue;
+            }
+            for (String textureId : model.defaultState().resolved().textureSlots().values()) {
+                if (mine.contains(textureId)) {
+                    used.merge(textureId, 1, Integer::sum);
+                }
+            }
+        }
+        java.util.Set<String> narrow = new java.util.HashSet<>();
+        for (java.util.Map.Entry<String, Integer> each : used.entrySet()) {
+            if (each.getValue() <= SHEET_FAMILY) {
+                narrow.add(each.getKey());
+            }
+        }
+        return narrow;
     }
 
     /**
@@ -188,7 +243,7 @@ public record ExplorerQuery(String text,
         return folder.endsWith("item") || folder.endsWith("items") ? "" : folder;
     }
 
-    /** Whether a model draws with any of the same texture files. */
+    /** Whether a model draws with any of these texture files. */
     public static boolean sharesASheet(java.util.Set<String> sheets, LogicalModel other) {
         if (sheets == null || sheets.isEmpty() || other == null) {
             return false;
@@ -199,42 +254,6 @@ public record ExplorerQuery(String text,
             }
         }
         return false;
-    }
-
-    /**
-     * The loosest tier: about as complicated, on the same kind of item.
-     *
-     * <p>About, not exactly. A family of plushes where one has an extra cuboid
-     * for an ear is the case this tier exists to catch, and equality excluded
-     * precisely that. The tolerance is a quarter of the smaller count, with a
-     * floor of two so that small models have any latitude at all \u2014 one
-     * cuboid against six is still a different thing.</p>
-     *
-     * <p>Item type is checked too, because "twelve cuboids and one texture
-     * slot" on its own describes half a pack. With it, the answer to "what
-     * else looks like this sword" is other swords.</p>
-     */
-    public static boolean sameBuildAs(LogicalModel subject, LogicalModel other) {
-        if (subject == null || other == null) {
-            return false;
-        }
-        var mine = subject.defaultState().resolved();
-        var theirs = other.defaultState().resolved();
-        if (mine.generated() || theirs.generated()) {
-            return false;
-        }
-        int ours = mine.elementCount();
-        int yours = theirs.elementCount();
-        if (ours <= 0 || yours <= 0) {
-            return false;
-        }
-        if (Math.abs(ours - yours) > Math.max(2, Math.min(ours, yours) / 4)) {
-            return false;
-        }
-        if (Math.abs(mine.textureSlots().size() - theirs.textureSlots().size()) > 1) {
-            return false;
-        }
-        return subject.type() == other.type();
     }
 
 

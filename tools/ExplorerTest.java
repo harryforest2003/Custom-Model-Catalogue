@@ -2310,10 +2310,69 @@ public final class ExplorerTest {
         check("and a pack's own subfolder does",
                 ExplorerQuery.folderOf(cat).endsWith("plushes"));
 
-        check("a cuboid of difference is within tolerance",
-                ExplorerQuery.sameBuildAs(cat, dog));
-        check("eleven cuboids of difference is not",
-                !ExplorerQuery.sameBuildAs(cat, sword));
+        // ---- the flood, and the two rules that stop it ----------------
+        // On a real pack this question answered with a hundred and ten pages.
+        // Both of these are that, reduced to something a harness can hold.
+        MemorySource crowd = new MemorySource();
+        StringBuilder crowdCases = new StringBuilder();
+        for (int i = 0; i < 140; i++) {
+            // One shape, a texture each: every one of them is an exact
+            // geometry match for the others, and none is a duplicate.
+            crowd.model("p:item/crowd/m" + i, "{\"elements\":" + boxOf(0)
+                    + ",\"textures\":{\"all\":\"p:c" + i
+                    + "\",\"extra\":\"p:c" + i + "\"}}");
+            crowd.texture("p:c" + i, 16, 16);
+            crowdCases.append(i == 0 ? "" : ",")
+                    .append("{\"when\":\"c").append(i)
+                    .append("\",\"model\":{\"type\":\"minecraft:model\",")
+                    .append("\"model\":\"p:item/crowd/m").append(i).append("\"}}");
+        }
+        List<LogicalModel> crowded = build(crowd, "minecraft:diamond_sword",
+                "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
+                        + "\"minecraft:custom_model_data\",\"cases\":["
+                        + crowdCases + "]}}");
+        check("a crowd of models is read as a crowd",
+                crowded.size() > ExplorerQuery.MOST_ALIKE);
+        check("and the answer is a shortlist rather than the pack",
+                ExplorerQuery.alike(crowded, crowded.get(0)).size()
+                        == ExplorerQuery.MOST_ALIKE + 1);
+
+        // A texture half the pack draws with is a palette, not a family sheet.
+        MemorySource palette = new MemorySource();
+        StringBuilder paletteCases = new StringBuilder();
+        int wide = ExplorerQuery.SHEET_FAMILY + 10;
+        for (int i = 0; i < wide; i++) {
+            // Each in its own folder and its own shape, sharing one sheet.
+            palette.model("p:item/p" + i + "/m", "{\"elements\":" + boxOf(i)
+                    + ",\"textures\":{\"all\":\"p:palette\",\"extra\":\"p:u"
+                    + i + "\"}}");
+            palette.texture("p:u" + i, 16, 16);
+            paletteCases.append(i == 0 ? "" : ",")
+                    .append("{\"when\":\"p").append(i)
+                    .append("\",\"model\":{\"type\":\"minecraft:model\",")
+                    .append("\"model\":\"p:item/p").append(i).append("/m\"}}");
+        }
+        palette.texture("p:palette", 16, 16);
+        List<LogicalModel> shared = build(palette, "minecraft:paper",
+                "{\"model\":{\"type\":\"minecraft:select\",\"property\":"
+                        + "\"minecraft:custom_model_data\",\"cases\":["
+                        + paletteCases + "]}}");
+        check("the palette is read as widely used",
+                shared.size() > ExplorerQuery.SHEET_FAMILY
+                        && !ExplorerQuery.familySheets(shared, shared.get(0))
+                                .contains("p:palette"));
+        check("so sharing it is not a family",
+                ExplorerQuery.alike(shared, shared.get(0)).size() == 1);
+    }
+
+    /** A single cuboid with its own dimensions, so each model hashes apart. */
+    private static String boxOf(int which) {
+        int across = 1 + which % 15;
+        int up = 1 + which / 15;
+        return "[{\"from\":[0,0,0],\"to\":[" + across + "," + up
+                + ",16],\"faces\":{"
+                + "\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#all\"},"
+                + "\"south\":{\"uv\":[0,0,16,16],\"texture\":\"#extra\"}}}]";
     }
 
     /** N stacked cuboids, with two texture slots so a sheet can be shared. */
@@ -2400,28 +2459,21 @@ public final class ExplorerTest {
                 like.stream().anyMatch(id -> id.endsWith("sword_red")));
         check("so is the same colour on another shape",
                 like.stream().anyMatch(id -> id.endsWith("hat_blue")));
-        // The whole point of the looser tiers. Sharing neither hash used to be
-        // a reason to be left out, which made this a recolour-finder.
-        check("and so is one built the same way, sharing neither",
-                like.stream().anyMatch(id -> id.endsWith("hat_red")));
-        check("but not one built quite differently",
+        // These four are flat in item/, so no folder signal, and hat_red shares
+        // neither hash nor a sheet with the subject. It used to match on having
+        // about the same number of cuboids, and that tier caught half a pack.
+        check("but not one that merely has about as many cuboids",
+                like.stream().noneMatch(id -> id.endsWith("hat_red")));
+        check("nor one built quite differently",
                 like.stream().noneMatch(id -> id.endsWith("tower")));
 
         // Order carries the confidence: the tiers are the answer's ranking, so
-        // an exact match must not be buried among the guesses.
+        // an exact match must not be buried behind a weaker one.
         java.util.List<String> ordered = new java.util.ArrayList<>(like);
-        int exact = -1;
-        int loose = -1;
-        for (int i = 0; i < ordered.size(); i++) {
-            if (ordered.get(i).endsWith("sword_red")) {
-                exact = i;
-            }
-            if (ordered.get(i).endsWith("hat_red")) {
-                loose = i;
-            }
-        }
-        check("the exact match is offered before the loose one",
-                exact > 0 && loose > exact);
+        int shape = indexEndingWith(ordered, "sword_red");
+        int sheet = indexEndingWith(ordered, "hat_blue");
+        check("the identical shape comes before the shared textures",
+                shape > 0 && sheet > shape);
 
         // A vanilla parent must not count as a template, or every generated
         // sprite in the game would be a relative of every other.
