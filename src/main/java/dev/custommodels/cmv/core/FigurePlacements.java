@@ -40,14 +40,29 @@ import java.util.concurrent.TimeUnit;
  *
  * <h2>Shape of the file</h2>
  *
- * <p>Model id to the game's own name for the slot:</p>
+ * <p>Model id to the game's own name for the slot, and model id with a
+ * {@code |frame} suffix to how that model's item frame is hung:</p>
  *
  * <pre>{@code
  * {
  *   "examplepack:item/hats/templar_hat": "head",
- *   "examplepack:item/tools/ruby_pickaxe": "mainhand"
+ *   "examplepack:item/tools/ruby_pickaxe": "mainhand",
+ *   "examplepack:item/decor/plate|frame": "floor"
  * }
  * }</pre>
+ *
+ * <p>Two choices per model, in one file, under one key space. A second file
+ * would have meant a second copy of everything below this — the dedupe
+ * against what is on disk, the one writer thread, the flush on leaving the
+ * viewer — to hold a word per model. A key suffix buys all of it for the
+ * price of one character, and {@code |} is a character a model id cannot
+ * contain: namespaces and paths are letters, digits, underscore, dot, hyphen
+ * and slash, so no suffixed key can ever collide with a real model's own.</p>
+ *
+ * <p>Old files are read unchanged and need no migration, because a placement's
+ * key is exactly what it always was. A file written by this version and read
+ * by the one before it loses the mounting and keeps every placement, since the
+ * suffixed keys simply match no model.</p>
  *
  * <p>Sorted, so a model that arrives with a new pack lands in a predictable
  * place instead of reshuffling everything. Only models that have been moved are
@@ -176,9 +191,45 @@ public final class FigurePlacements {
         return json.equals(onDisk) ? null : json;
     }
 
+    /**
+     * Which choice about a model is being remembered.
+     *
+     * <p>{@link #PLACE} keys on the model id alone, which is what the file has
+     * always held; anything added since carries a suffix.</p>
+     */
+    public enum Kind {
+        /** Where on the figure the model is shown: a slot's own name. */
+        PLACE(""),
+        /** How the model's item frame is hung: {@code wall} or {@code floor}. */
+        MOUNT("|frame");
+
+        private final String suffix;
+
+        Kind(String suffix) {
+            this.suffix = suffix;
+        }
+
+        /**
+         * The key this choice about this model is held under.
+         *
+         * <p>Public because it is the file's contract rather than an internal
+         * detail: that a placement's key is the bare model id is what lets a
+         * file written by an older version be read by this one, and a harness
+         * can check that without a game directory behind it.</p>
+         */
+        public String keyFor(String modelId) {
+            return modelId + suffix;
+        }
+    }
+
     /** The saved slot name for a model, or null when it has never been moved. */
     public static String get(String modelId) {
-        return modelId == null ? null : entries().get(modelId);
+        return get(modelId, Kind.PLACE);
+    }
+
+    /** A saved choice about a model, or null when it has never been made. */
+    public static String get(String modelId, Kind kind) {
+        return modelId == null ? null : entries().get(kind.keyFor(modelId));
     }
 
     /**
@@ -188,13 +239,24 @@ public final class FigurePlacements {
      * all the way round to where you started writes nothing.</p>
      */
     public static void set(String modelId, String name) {
+        set(modelId, Kind.PLACE, name);
+    }
+
+    /**
+     * Remembers a choice about a model, to be written when the card closes.
+     *
+     * <p>A choice that is already what is saved is not a change, so cycling
+     * all the way round to where you started writes nothing.</p>
+     */
+    public static void set(String modelId, Kind kind, String name) {
         if (modelId == null || modelId.isEmpty() || name == null || name.isEmpty()) {
             return;
         }
-        if (name.equals(entries().get(modelId))) {
+        String key = kind.keyFor(modelId);
+        if (name.equals(entries().get(key))) {
             return;
         }
-        entries().put(modelId, name);
+        entries().put(key, name);
         // Only says a write may be needed. Whether one actually is, is settled
         // against the file when the viewer closes: see pending.
         dirty = true;

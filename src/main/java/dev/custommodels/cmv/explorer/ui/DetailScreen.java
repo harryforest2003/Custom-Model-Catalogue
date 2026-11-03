@@ -51,13 +51,53 @@ public final class DetailScreen extends Screen {
     private float pitch = -8.0F;
     private float zoom = 1.0F;
     private boolean autoRotate = CmvConfig.get().autoRotateDetail;
+    /** Which of the three ways of looking at a model the panel is showing. */
+    private enum Stage { MODEL, FIGURE, FRAME }
+
+    private Stage stage = openingStage();
+
+    /** Whether the frame is lying flat rather than hung on a wall. */
+    private boolean onFloor;
+
+    /** How the two mountings are written in the per-model file. */
+    private static final String FLOOR = "floor";
+    private static final String WALL = "wall";
+
+    /** Which of the frame's eight positions is showing. */
+    private int framePosition;
+
+    /** How long the current position has been held, in seconds. */
+    private float framePositionHeld;
+
     /**
-     * Which of the two renders the panel is showing.
+     * The position, said in words, worked out when it changes.
      *
-     * <p>The model render is the default, and the one the card has always
-     * opened on.</p>
+     * <p>Not while drawing: it would be a string joined sixty times a second
+     * to say a thing that changes once a second at most, which is the whole
+     * of what the allocation checker is for.</p>
      */
-    private boolean onFigure = CmvConfig.get().figureInDetail;
+    private String framePositionSaid = positionSaid(0, false);
+
+    /**
+     * Where a card opens, from the two switches that remember it.
+     *
+     * <p>The frame takes precedence, and a config that has never heard of it
+     * opens where it always did.</p>
+     */
+    private static Stage openingStage() {
+        CmvConfig config = CmvConfig.get();
+        return config.frameInDetail ? Stage.FRAME
+                : config.figureInDetail ? Stage.FIGURE : Stage.MODEL;
+    }
+
+    private static String positionSaid(int position, boolean onFloor) {
+        return "position " + (position + 1) + " of " + PreviewService.FRAME_POSITIONS
+                + "   " + position * (360 / PreviewService.FRAME_POSITIONS) + "\u00b0"
+                + (onFloor ? "   lying flat" : "   on a wall");
+    }
+
+    /** How long each of the eight positions is held while the cycle runs. */
+    private static final float FRAME_HOLD_SECONDS = 0.7F;
     /**
      * The other view. Costs nothing until it is asked for: no mannequin is
      * made, and no stack is built, until the panel first draws it.
@@ -114,6 +154,15 @@ public final class DetailScreen extends Screen {
         // opens where it was left even on the frame the figure view appears.
         this.placeChosen = FigurePreview.placementByName(
                 FigurePlacements.get(placementKey()));
+        // The same for the frame's mounting, per model and from the same file:
+        // which way up a thing is meant to sit is a fact about that thing, not
+        // a mood the viewer is in. A plate lies on a table and a painting hangs
+        // on a wall, and neither answer is right for the other.
+        this.onFloor = FLOOR.equals(
+                FigurePlacements.get(placementKey(), FigurePlacements.Kind.MOUNT));
+        // Said now, because the field initialiser above ran before the line
+        // that settles which way this model is hung.
+        this.framePositionSaid = positionSaid(framePosition, onFloor);
     }
 
     @Override
@@ -226,7 +275,16 @@ public final class DetailScreen extends Screen {
         if (dragging || autoRotate) {
             stillSince = System.currentTimeMillis();
         }
-        if (onFigure) {
+        if (stage == Stage.FRAME) {
+            // The frame view has a clock of its own, and it still wants the
+            // texture one: an animated texture goes on animating in a frame.
+            // The state and dissolve clocks belong to the model render, which
+            // is not on screen.
+            advanceFramePosition(seconds);
+            advanceTextures(seconds);
+            return;
+        }
+        if (stage == Stage.FIGURE) {
             // The model view's three clocks are the model view's work: a state
             // to step, a dissolve to run, a texture tick to advance, each of
             // which asks the preview service to render. None of it is on
@@ -279,6 +337,47 @@ public final class DetailScreen extends Screen {
      * states have them as parts drawn together, and stepping through those
      * would take the model apart rather than animate it.</p>
      */
+    /**
+     * Moves the cycle on, when it is running.
+     *
+     * <p>A while rather than an if: a window that dropped frames for two
+     * seconds should come back round to where the cycle would be, not two
+     * seconds behind it.</p>
+     */
+    private void advanceFramePosition(float seconds) {
+        if (!autoRotate) {
+            return;
+        }
+        framePositionHeld += seconds;
+        while (framePositionHeld >= FRAME_HOLD_SECONDS) {
+            framePositionHeld -= FRAME_HOLD_SECONDS;
+            stepFrame(1);
+        }
+    }
+
+    /**
+     * Moves the frame on by {@code by} positions and says where it is.
+     *
+     * <p>Wrapped, so the arrows go round rather than stopping at either end:
+     * eight positions in a ring is what the frame itself does.</p>
+     */
+    private void stepFrame(int by) {
+        framePosition = Math.floorMod(framePosition + by, PreviewService.FRAME_POSITIONS);
+        framePositionSaid = positionSaid(framePosition, onFloor);
+    }
+
+    /**
+     * An arrow was used, so the cycle stops.
+     *
+     * <p>Stepping while it runs is a fight with it: the position moves, and
+     * then the clock moves it again a moment later.</p>
+     */
+    private void nudgeFrame(int by) {
+        autoRotate = false;
+        framePositionHeld = 0.0F;
+        stepFrame(by);
+    }
+
     private void advanceState(float seconds) {
         if (!cycleStates || dragging) {
             return;
@@ -609,8 +708,10 @@ public final class DetailScreen extends Screen {
         // between them should change what is drawn and nothing else.
         int drawX = centreX - box / 2;
         int drawY = centreY - box / 2;
-        if (onFigure) {
+        if (stage == Stage.FIGURE) {
             drawFigure(graphics, drawX, drawY, box, centreX, centreY);
+        } else if (stage == Stage.FRAME) {
+            drawFrame(graphics, drawX, drawY, box, centreX, centreY);
         } else {
             // Small while it turns, the size it is actually displayed at once it
             // stops. A spin asks for a fresh render every three degrees; standing
@@ -682,8 +783,11 @@ public final class DetailScreen extends Screen {
             }
         }
 
-        String angle = String.format("yaw %.0f   pitch %.0f   zoom %.2fx", yaw, pitch, zoom)
-                + (onFigure ? "   " + placement() : "   " + shownPixels + "px"
+        // The frame view's camera does not move, so there is no angle to
+        // report and the position is what somebody wants to know.
+        String angle = stage == Stage.FRAME ? framePositionSaid
+                : String.format("yaw %.0f   pitch %.0f   zoom %.2fx", yaw, pitch, zoom)
+                + (stage == Stage.FIGURE ? "   " + placement() : "   " + shownPixels + "px"
                         + (sharpening ? " \u2192 " + sharpTarget : ""));
         GuiTheme.text(graphics, this.font, angle, left + 6, bottom - 12,
                 GuiTheme.TEXT_MUTED, false);
@@ -777,9 +881,19 @@ public final class DetailScreen extends Screen {
      * each other.</p>
      */
     private List<Control> controls(boolean forMeasuring) {
-        List<Control> made = new ArrayList<>(7);
-        made.add(new Control(onFigure ? "Show model" : "Show on me",
-                wider("Show model", "Show on me"), this::flipView));
+        List<Control> made = new ArrayList<>(8);
+        made.add(new Control(stageLabel(),
+                        wider("Show in a frame", wider("Show model", "Show on me")),
+                        this::flipView));
+        if (forMeasuring || stage == Stage.FRAME) {
+            // Counted whether or not they are showing, like the placement
+            // control below, so flipping views cannot change how many rows the
+            // controls need and shift the preview under the cursor.
+            made.add(new Control("\u25c0", () -> nudgeFrame(-1)));
+            made.add(new Control("\u25b6", () -> nudgeFrame(1)));
+            made.add(new Control(onFloor ? "On a wall" : "On the floor",
+                    wider("On the floor", "On a wall"), this::flipMounting));
+        }
         if (forMeasuring) {
             // Named at its widest and never asked where the model would go:
             // working that out needs a figure, and the view this is measuring
@@ -787,24 +901,64 @@ public final class DetailScreen extends Screen {
             // so neither flipping views nor opening an item with fewer
             // placements can change how many rows the controls need.
             made.add(new Control(widestPlaceName(), this::flipPlacement));
-        } else if (onFigure && placeChoosable()) {
+        } else if (stage == Stage.FIGURE && placeChoosable()) {
             made.add(new Control(placeName(placeNext()), widestPlaceName(),
                     this::flipPlacement));
         }
         made.addAll(List.of(
-                new Control(autoRotate ? "Pause spin" : "Auto spin",
-                        wider("Pause spin", "Auto spin"), () -> autoRotate = !autoRotate),
+                new Control(stage == Stage.FRAME
+                        ? (autoRotate ? "Pause cycle" : "Auto cycle")
+                        : (autoRotate ? "Pause spin" : "Auto spin"),
+                        wider(wider("Pause cycle", "Auto cycle"),
+                                wider("Pause spin", "Auto spin")),
+                        () -> autoRotate = !autoRotate),
                 new Control("Reset view", this::resetView),
                 new Control("Copy image", this::copyImage),
                 new Control("Save image", this::saveImage),
                 new Control("Animated preview", this::exportAnimation),
-                new Control("Find similar", this::findSimilar)));
+                new Control("Find similar", this::findSimilar),
+                new Control("Compare with...", this::compareWith)));
         return made;
     }
 
     /** Whichever of two labels takes more room. */
     private String wider(String one, String other) {
         return this.font.width(one) >= this.font.width(other) ? one : other;
+    }
+
+    /**
+     * Draws the model as an item frame holds it: the frame behind, the model
+     * inside it, both to one scale.
+     *
+     * <p>Zoom and dragging are deliberately not honoured here. The question
+     * this view answers is what the game will show, and the game shows a frame
+     * from where you are standing.</p>
+     */
+    private void drawFrame(GuiGraphicsExtractor graphics, int drawX, int drawY,
+                           int box, int centreX, int centreY) {
+        CmvConfig config = CmvConfig.get();
+        int guiScale = McCompat.guiScale();
+        int size = PreviewService.detailPixels(box, guiScale, false, 1,
+                config.maxDetailPixels(), config.maxStillPixels(),
+                PreviewService.cycleBudget());
+        Identifier frame = index.previews().itemFrame(model, stateIndex, size, onFloor);
+        if (frame != null) {
+            GuiTheme.texture(graphics, frame, drawX, drawY, box, box, 0.0F, 1.0F);
+        }
+        Identifier item = index.previews()
+                .framed(model, stateIndex, size, framePosition, textureTick, onFloor);
+        if (item != null) {
+            GuiTheme.texture(graphics, item, drawX, drawY, box, box, 0.0F, 1.0F);
+            return;
+        }
+        // Said over the frame rather than instead of it: the frame arriving
+        // first is the normal case and is not a failure to show.
+        String message = state().resolved().exists()
+                ? "Rendering..." : "Model file not found";
+        GuiTheme.text(graphics, this.font, message,
+                centreX - this.font.width(message) / 2, centreY - 4,
+                state().resolved().exists() ? GuiTheme.TEXT_MUTED : GuiTheme.TEXT_ERROR,
+                false);
     }
 
     /**
@@ -910,14 +1064,43 @@ public final class DetailScreen extends Screen {
      * stack is built again on the way back in, which costs one item lookup.</p>
      */
     private void flipView() {
-        onFigure = !onFigure;
+        stage = switch (stage) {
+            case MODEL -> Stage.FIGURE;
+            case FIGURE -> Stage.FRAME;
+            case FRAME -> Stage.MODEL;
+        };
         CmvConfig config = CmvConfig.get();
-        config.figureInDetail = onFigure;
+        config.figureInDetail = stage == Stage.FIGURE;
+        config.frameInDetail = stage == Stage.FRAME;
         config.save();
-        if (!onFigure) {
+        if (stage != Stage.FIGURE) {
             figure.close();
             figureDressed = false;
         }
+    }
+
+    /**
+     * Hangs the frame the other way, and remembers it for this model.
+     *
+     * <p>Remembered at once and written when the card closes, exactly as the
+     * figure placement is, and in the same file \u2014 see {@link
+     * FigurePlacements}. The position is left where it is: turning a plate
+     * over does not turn the plate.</p>
+     */
+    private void flipMounting() {
+        onFloor = !onFloor;
+        framePositionSaid = positionSaid(framePosition, onFloor);
+        FigurePlacements.set(placementKey(), FigurePlacements.Kind.MOUNT,
+                onFloor ? FLOOR : WALL);
+    }
+
+    /** What the view control says it will do next. */
+    private String stageLabel() {
+        return switch (stage) {
+            case MODEL -> "Show on me";
+            case FIGURE -> "Show in a frame";
+            case FRAME -> "Show model";
+        };
     }
 
     /**
@@ -1132,6 +1315,11 @@ public final class DetailScreen extends Screen {
      * duplicates, so this costs one pass over the index and nothing else. See
      * {@link dev.custommodels.cmv.explorer.graph.ExplorerQuery#alike}.</p>
      */
+    private void compareWith() {
+        McCompat.setScreen(
+                dev.custommodels.cmv.wrap.CatalogueScreen.comparingWith(model));
+    }
+
     private void findSimilar() {
         McCompat.setScreen(
                 dev.custommodels.cmv.wrap.CatalogueScreen.lookingLike(model));
@@ -1611,7 +1799,9 @@ public final class DetailScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        if (dragging) {
+        // Nothing to drag in a frame: it hangs on a wall facing you, and
+        // turning the camera would be showing something the game never does.
+        if (dragging && stage != Stage.FRAME) {
             yaw = (yaw - (float) (event.x() - lastMouseX) * 0.6F) % 360.0F;
             pitch = Math.max(-89.0F, Math.min(89.0F,
                     pitch + (float) (event.y() - lastMouseY) * 0.6F));
@@ -1655,11 +1845,22 @@ public final class DetailScreen extends Screen {
                 return true;
             }
             case org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT -> {
-                stateIndex = Math.floorMod(stateIndex - 1, model.states().size());
+                // In a frame the arrows turn the item, which is the only thing
+                // in that view there is to move. Elsewhere they step the
+                // model's own states, as they always have.
+                if (stage == Stage.FRAME) {
+                    nudgeFrame(-1);
+                } else {
+                    stateIndex = Math.floorMod(stateIndex - 1, model.states().size());
+                }
                 return true;
             }
             case org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT -> {
-                stateIndex = (stateIndex + 1) % model.states().size();
+                if (stage == Stage.FRAME) {
+                    nudgeFrame(1);
+                } else {
+                    stateIndex = (stateIndex + 1) % model.states().size();
+                }
                 return true;
             }
             default -> {

@@ -58,6 +58,18 @@ public final class Rasterizer {
      *                         item and anything descended from
      *                         {@code item/generated}
      * @param background       ARGB fill; use 0 for a transparent image
+     * @param extent           how many model units the half-width of the
+     *                         image stands for, or 0 to fit the model to the
+     *                         image as every other preview does. Giving the
+     *                         same number to two renders draws them to one
+     *                         scale, which is the only way a picture can say
+     *                         that one model is twice the size of another
+     * @param spin             rotation about the model's own Z, in degrees,
+     *                         applied after the display transform and before
+     *                         the camera — the eight positions of an item
+     *                         frame, which turn the item in the plane of the
+     *                         frame however the frame is hung and wherever the
+     *                         camera is
      */
     public record View(int width,
                        int height,
@@ -68,25 +80,73 @@ public final class Rasterizer {
                        ModelJson.Transform displayTransform,
                        boolean frontLit,
                        int background,
-                       int tick) {
+                       int tick,
+                       float spin,
+                       float extent,
+                       Anchor anchor) {
+
+        /**
+         * Where the image is centred, in item units.
+         *
+         * <p>Without one a render is centred on its own model, which is right
+         * for a picture of one thing and wrong for two pictures of one scene:
+         * centred separately, an item and the frame holding it are drawn
+         * through each other. Two renders given the same anchor are two views
+         * of the same place.</p>
+         */
+        public record Anchor(float x, float y, float z) { }
 
         /** A still: whatever animated textures the model has show frame one. */
         public View(int width, int height, int supersample, float yaw, float pitch,
                     float zoom, ModelJson.Transform displayTransform, boolean frontLit,
                     int background) {
             this(width, height, supersample, yaw, pitch, zoom, displayTransform,
-                    frontLit, background, 0);
+                    frontLit, background, 0, 0.0F, 0.0F, null);
+        }
+
+        /** A moment of an animated texture, seen the right way up. */
+        public View(int width, int height, int supersample, float yaw, float pitch,
+                    float zoom, ModelJson.Transform displayTransform, boolean frontLit,
+                    int background, int tick) {
+            this(width, height, supersample, yaw, pitch, zoom, displayTransform,
+                    frontLit, background, tick, 0.0F, 0.0F, null);
+        }
+
+        /** A spun view that still fits itself to the box. */
+        public View(int width, int height, int supersample, float yaw, float pitch,
+                    float zoom, ModelJson.Transform displayTransform, boolean frontLit,
+                    int background, int tick, float spin) {
+            this(width, height, supersample, yaw, pitch, zoom, displayTransform,
+                    frontLit, background, tick, spin, 0.0F, null);
+        }
+
+        /** A view of one scene: fitted to {@code extent}, centred on {@code anchor}. */
+        public View(int width, int height, int supersample, float yaw, float pitch,
+                    float zoom, ModelJson.Transform displayTransform, boolean frontLit,
+                    int background, int tick, float spin, float extent) {
+            this(width, height, supersample, yaw, pitch, zoom, displayTransform,
+                    frontLit, background, tick, spin, extent, null);
         }
 
         public View withAngle(float newYaw, float newPitch) {
             return new View(width, height, supersample, newYaw, newPitch, zoom,
-                    displayTransform, frontLit, background, tick);
+                    displayTransform, frontLit, background, tick, spin, extent, anchor);
+        }
+
+        /**
+         * The same view with the model turned in its own plane.
+         *
+         * <p>What an item frame's eight positions do.</p>
+         */
+        public View withSpin(float newSpin) {
+            return new View(width, height, supersample, yaw, pitch, zoom,
+                    displayTransform, frontLit, background, tick, newSpin, extent, anchor);
         }
 
         /** The same view at another moment of its textures' animations. */
         public View withTick(int newTick) {
             return new View(width, height, supersample, yaw, pitch, zoom,
-                    displayTransform, frontLit, background, newTick);
+                    displayTransform, frontLit, background, newTick, spin, extent, anchor);
         }
 
         public View withSize(int newWidth, int newHeight, int newSupersample) {
@@ -96,7 +156,7 @@ public final class Rasterizer {
             // one texture frame, and the reason that one went unnoticed is
             // that nothing calls this yet.
             return new View(newWidth, newHeight, newSupersample, yaw, pitch, zoom,
-                    displayTransform, frontLit, background, tick);
+                    displayTransform, frontLit, background, tick, spin, extent, anchor);
         }
     }
 
@@ -223,6 +283,41 @@ public final class Rasterizer {
 
     // ------------------------------------------------------------ transform
 
+    /**
+     * A model's box in item space: minimum x, y, z then maximum x, y, z.
+     *
+     * <p>The measurement {@link #project} makes to fit a model to its image,
+     * offered on its own so that two models can be drawn as one scene:
+     * measure both, work out a scale and a place that holds them, and hand
+     * those to both as the view's extent and anchor.</p>
+     *
+     * <p>A box rather than the radius this used to give, because placing one
+     * model against another needs to know where its back is and a sphere has
+     * no back. The caller turns it into whatever reach it needs.</p>
+     *
+     * <p>The spin is deliberately not taken: a model is the same size
+     * whichever of a frame's eight positions it is in, and measuring per
+     * position would make the frame around it breathe as it turned.</p>
+     */
+    public static float[] boundsOf(Mesh mesh, ModelJson.Transform transform) {
+        if (mesh.quadCount() == 0) {
+            return new float[6];
+        }
+        float[] min = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE};
+        float[] max = {-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+        for (int i = 0; i < mesh.quadCount() * 4; i++) {
+            float[] p = applyDisplayTransform(mesh.positions()[i * 3] - 8.0F,
+                    mesh.positions()[i * 3 + 1] - 8.0F,
+                    mesh.positions()[i * 3 + 2] - 8.0F, transform);
+            for (int axis = 0; axis < 3; axis++) {
+                min[axis] = Math.min(min[axis], p[axis]);
+                max[axis] = Math.max(max[axis], p[axis]);
+            }
+        }
+        return new float[] {min[0], min[1], min[2], max[0], max[1], max[2]};
+    }
+
+
     private static void project(Mesh mesh, View view, int w, int h,
                                 float[] out, float[] brightness, long[] order,
                                 Scratch scratch) {
@@ -231,6 +326,8 @@ public final class Rasterizer {
         float pitch = (float) Math.toRadians(view.pitch());
         float cosYaw = (float) Math.cos(yaw), sinYaw = (float) Math.sin(yaw);
         float cosPitch = (float) Math.cos(pitch), sinPitch = (float) Math.sin(pitch);
+        float spin = (float) Math.toRadians(view.spin());
+        float cosSpin = (float) Math.cos(spin), sinSpin = (float) Math.sin(spin);
 
         // Pass one: model space to item space, so the fit can be measured
         // against what will actually be drawn rather than the raw geometry.
@@ -244,8 +341,16 @@ public final class Rasterizer {
             float y = mesh.positions()[i * 3 + 1] - 8.0F;
             float z = mesh.positions()[i * 3 + 2] - 8.0F;
             float[] p = applyDisplayTransform(x, y, z, transform);
-            item[i * 3] = p[0];
-            item[i * 3 + 1] = p[1];
+            // The frame's own turn, about the model's Z, which is the axis a
+            // frame hung on a wall faces along. After the display transform
+            // because that is the order the game applies them in - the frame
+            // turns the item it has already placed - and before the camera
+            // because the frame turns with the wall it is on, not with the
+            // viewer. Rolling the picture instead was right only for a frame
+            // seen exactly face-on, and wrong the moment the camera tilts to
+            // look at one lying on the floor.
+            item[i * 3] = cosSpin * p[0] - sinSpin * p[1];
+            item[i * 3 + 1] = sinSpin * p[0] + cosSpin * p[1];
             item[i * 3 + 2] = p[2];
             for (int axis = 0; axis < 3; axis++) {
                 min[axis] = Math.min(min[axis], p[axis]);
@@ -253,22 +358,36 @@ public final class Rasterizer {
             }
         }
 
-        float centreX = (min[0] + max[0]) * 0.5F;
-        float centreY = (min[1] + max[1]) * 0.5F;
-        float centreZ = (min[2] + max[2]) * 0.5F;
+        float boxX = (min[0] + max[0]) * 0.5F;
+        float boxY = (min[1] + max[1]) * 0.5F;
+        float boxZ = (min[2] + max[2]) * 0.5F;
+
+        // Centred where the caller says, if it said. The fit below still
+        // measures from the model's own middle: the anchor decides where the
+        // picture is taken from, not how much of the world it covers.
+        View.Anchor anchor = view.anchor();
+        float centreX = anchor == null ? boxX : anchor.x();
+        float centreY = anchor == null ? boxY : anchor.y();
+        float centreZ = anchor == null ? boxZ : anchor.z();
 
         // Fit against the bounding sphere, not the box, so the model does not
         // grow and shrink as it spins.
         float radius = 0.0F;
         for (int i = 0; i < quads * 4; i++) {
-            float dx = item[i * 3] - centreX;
-            float dy = item[i * 3 + 1] - centreY;
-            float dz = item[i * 3 + 2] - centreZ;
+            float dx = item[i * 3] - boxX;
+            float dy = item[i * 3 + 1] - boxY;
+            float dz = item[i * 3 + 2] - boxZ;
             radius = Math.max(radius, dx * dx + dy * dy + dz * dz);
         }
         radius = Math.max(0.001F, (float) Math.sqrt(radius));
 
-        float pixelsPerUnit = (Math.min(w, h) * 0.5F * 0.92F * view.zoom()) / radius;
+        // Fitted to the model, unless the caller has said what the image
+        // stands for. Fitting is right for a preview of one thing and wrong
+        // for a picture of two things together: fit separately, a pea and a
+        // cathedral both fill the frame and the picture says they are the
+        // same size.
+        float fitTo = view.extent() > 0.0F ? view.extent() : radius;
+        float pixelsPerUnit = (Math.min(w, h) * 0.5F * 0.92F * view.zoom()) / fitTo;
         float originX = w * 0.5F;
         float originY = h * 0.5F;
 
@@ -280,7 +399,9 @@ public final class Rasterizer {
                 float y = item[i * 3 + 1] - centreY;
                 float z = item[i * 3 + 2] - centreZ;
 
-                // Yaw about Y, then pitch about X.
+                // Yaw about Y, then pitch about X. The spin has already
+                // been applied, in the model's own space, where the frame
+                // turns it.
                 float rx = cosYaw * x + sinYaw * z;
                 float rz = -sinYaw * x + cosYaw * z;
                 float ry = cosPitch * y - sinPitch * rz;

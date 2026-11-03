@@ -268,6 +268,23 @@ public final class CatalogueScreen extends Screen {
      * exactly the per-frame work this screen is gated against.</p>
      */
     private String lookAlikeSaid = "";
+
+    /** The model whose look-alikes are showing, for the compare chip. */
+    private LogicalModel lookAlikeModel;
+
+    /**
+     * The model waiting for a partner, or null when nothing is being
+     * compared.
+     *
+     * <p>A field of the screen rather than a flag on the look-alike bar. It
+     * used to be the latter, which meant the only way to compare two models
+     * was to find a family first \u2014 fine when that is what you were doing,
+     * useless when you had one model open and wanted another beside it.</p>
+     */
+    private LogicalModel compareWith;
+
+    /** What the compare bar says, worked out when the mode is entered. */
+    private String compareBarSaid = "";
     /** True when the grid is showing the favourites rather than a set. */
     private boolean openFavourites;
     /**
@@ -407,12 +424,29 @@ public final class CatalogueScreen extends Screen {
         screen.tab = Tab.CATALOGUE;
         screen.lookAlike = ExplorerQuery.alike(
                 ExplorerIndex.get().browsable(), model);
+        screen.lookAlikeModel = model;
         int others = screen.lookAlike.size() - 1;
         String name = model == null ? "" : model.displayName();
         screen.lookAlikeSaid = others <= 0
                 ? "Nothing else looks like " + name
                 : others + (others == 1 ? " other looks" : " others look")
                         + " like " + name;
+        return screen;
+    }
+
+    /**
+     * Opens the grid waiting for a second model to compare this one with.
+     *
+     * <p>Reached from a model's detail view, so that comparing does not have
+     * to start by finding a family: one model is already chosen and the grid
+     * is there to pick the other.</p>
+     */
+    public static CatalogueScreen comparingWith(LogicalModel model) {
+        CatalogueScreen screen = new CatalogueScreen();
+        screen.tab = Tab.CATALOGUE;
+        screen.compareWith = model;
+        screen.compareBarSaid = model == null ? ""
+                : "Pick a model to compare with " + model.displayName();
         return screen;
     }
 
@@ -725,7 +759,8 @@ public final class CatalogueScreen extends Screen {
         // since both are worked out from here.
         return HEADER_H + filterHeight()
                 + (showsItemStrip() ? ITEM_STRIP_H : 0) + 4
-                + ((inSet() || lookAlike != null) && !prose() ? 18 : 0);
+                + ((inSet() || lookAlike != null || compareWith != null) && !prose()
+                        ? 18 : 0);
     }
 
     private int gridBottom() {
@@ -1533,6 +1568,8 @@ public final class CatalogueScreen extends Screen {
         }
         if (lookAlike != null) {
             drawLookAlikeBar(graphics, mouseX, mouseY);
+        } else if (compareWith != null) {
+            drawCompareBar(graphics, mouseX, mouseY);
         } else if (openSet != null || openFavourites) {
             drawOpenSetBar(graphics, mouseX, mouseY);
         }
@@ -2450,6 +2487,45 @@ public final class CatalogueScreen extends Screen {
      * different: a set goes back to the list of sets, and this goes back to
      * everything.</p>
      */
+    /**
+     * Says the grid is waiting for a second model, and offers the way out.
+     *
+     * <p>Its own bar rather than the look-alike one's, because it is a
+     * different state: that bar says what the grid has been narrowed to, and
+     * this one says what the next click will do to it.</p>
+     */
+    private void drawCompareBar(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        int left = sidebarWidth() + PAD;
+        int y = gridTop() - 18;
+        String back = "\u2039 Stop comparing";
+        int backWidth = this.font.width(back) + 12;
+        boolean hover = inside(mouseX, mouseY, left, y, backWidth, 15);
+        GuiTheme.chip(graphics, left, y, backWidth, 15, false, hover);
+        GuiTheme.text(graphics, this.font, back, left + 6, y + 4,
+                hover ? GuiTheme.TEXT_HEADING : GuiTheme.TEXT_DIM, false);
+        hits.add(new Hit(left, y, backWidth, 15, () -> {
+            compareWith = null;
+            rebuild();
+        }));
+        GuiTheme.text(graphics, this.font,
+                trim(compareBarSaid, this.width - left - backWidth - PAD - 16),
+                left + backWidth + 8, y + 4, GuiTheme.ACCENT_BLUE, false);
+    }
+
+    /**
+     * Turns the compare mode on or off from the look-alike bar.
+     *
+     * <p>Its own method rather than a lambda inside the drawing, because the
+     * sentence it builds is a string join and a draw path is read as text: it
+     * cannot tell that a lambda there only runs on a click, and it is right
+     * not to guess.</p>
+     */
+    private void toggleCompareWith() {
+        compareWith = compareWith == null ? lookAlikeModel : null;
+        compareBarSaid = compareWith == null ? ""
+                : "Pick a model to compare with " + compareWith.displayName();
+    }
+
     private void drawLookAlikeBar(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
         int left = sidebarWidth() + PAD;
         int y = gridTop() - 18;
@@ -2462,9 +2538,22 @@ public final class CatalogueScreen extends Screen {
         hits.add(new Hit(left, y, backWidth, 15, () -> {
             lookAlike = null;
             lookAlikeSaid = "";
+            lookAlikeModel = null;
+            compareWith = null;
             page = 0;
             rebuild();
         }));
+        if (lookAlikeModel != null) {
+            boolean on = compareWith != null;
+            String label = on ? "Pick one to compare" : "Compare with this";
+            int width = this.font.width(label) + 12;
+            int compareX = this.width - PAD - width;
+            boolean hovering = inside(mouseX, mouseY, compareX, y, width, 15);
+            GuiTheme.chip(graphics, compareX, y, width, 15, on, hovering);
+            GuiTheme.text(graphics, this.font, label, compareX + 6, y + 4,
+                    on ? GuiTheme.TEXT_HEADING : GuiTheme.TEXT_DIM, false);
+            hits.add(new Hit(compareX, y, width, 15, this::toggleCompareWith));
+        }
         GuiTheme.text(graphics, this.font, lookAlikeSaid, left + backWidth + 8, y + 4,
                 GuiTheme.TEXT_MUTED, false);
     }
@@ -3485,6 +3574,17 @@ public final class CatalogueScreen extends Screen {
                 McCompat.playClick();
                 return true;
             }
+        }
+        // Before the detail view, because while the mode is on that is what
+        // the card was chosen for. A model compared with itself is not a
+        // comparison, so that one falls through and simply opens.
+        if (compareWith != null && hoveredModel != null
+                && !hoveredModel.defaultState().modelId()
+                        .equals(compareWith.defaultState().modelId())) {
+            McCompat.playClick();
+            McCompat.setScreen(new dev.custommodels.cmv.explorer.ui.CompareScreen(
+                    compareWith, hoveredModel, this));
+            return true;
         }
         if (hoveredModel != null) {
             McCompat.playClick();

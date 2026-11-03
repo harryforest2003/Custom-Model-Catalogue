@@ -128,6 +128,21 @@ public final class CmvConfig {
     public boolean figureInDetail = false;
 
     /**
+     * Show the detail view's model in an item frame rather than on its own.
+     *
+     * <p>Two switches for three views, and this one wins where both are on.
+     * The pair cannot say "both", and reading them in this order means a
+     * config written before the frame view existed opens a card exactly where
+     * it used to — which is what a new field has to do.</p>
+     *
+     * <p>Off. The frame view answers a narrower question than the other two:
+     * a model's {@code fixed} transform is the one a pack is likeliest to
+     * have left alone, so it is the one worth going to look at rather than
+     * the one worth opening on.</p>
+     */
+    public boolean frameInDetail = false;
+
+    /**
      * Play a model's frames in the detail view: a bow drawing, a crossbow
      * loading, a rod casting.
      *

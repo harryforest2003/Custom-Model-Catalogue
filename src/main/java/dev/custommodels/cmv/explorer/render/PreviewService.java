@@ -454,7 +454,7 @@ public final class PreviewService {
         // modulo the frame count, so tick 7 and tick 7 + a whole period draw
         // the same image. The key did not know that, so every step of the
         // clock was a miss and an animated model re-rendered for as long as it
-        // was on screen — forever, at a steady ten renders a second, for
+        // was on screen - forever, at a steady ten renders a second, for
         // frames it had already drawn. Taken modulo the period, the first
         // cycle renders and every cycle after it is free.
         int period = animationPeriod(resolved);
@@ -512,8 +512,556 @@ public final class PreviewService {
         return mostRecentFor(model, stateIndex, size);
     }
 
+    /** The eight positions an item frame will hold an item in. */
+    public static final int FRAME_POSITIONS = 8;
+
+    /**
+     * The camera angle for a frame on a wall: straight at it.
+     *
+     * <p>A frame on a wall is looked at from in front, so there is nothing to
+     * choose here and the number is written down only to be the other half of
+     * a pair.</p>
+     */
+    public static final float WALL_PITCH = 0.0F;
+
+    /**
+     * How far above a frame on the floor the viewer stands, in degrees.
+     *
+     * <p>Ten, which is somebody looking across a room at something on the
+     * ground rather than standing over it. A frame on a wall is looked at
+     * straight on, so this applies to the floor alone.</p>
+     */
+    public static final float FLOOR_ELEVATION = 10.0F;
+
+    /**
+     * The camera angle for a frame lying flat, on the floor or on a table.
+     *
+     * <p>A frame hung flat is the same frame rotated a quarter turn onto its
+     * back, so the camera's pitch and the frame's mounting are one rotation
+     * about one axis and one number does both.</p>
+     *
+     * <p>It is a quarter turn <em>plus</em> the viewer's own elevation, which
+     * is the half of this that cannot be reasoned out and was wrong twice.
+     * The quarter turn alone lays the frame on its back and leaves the camera
+     * exactly in its plane, looking along the table at an edge. Going round
+     * by the elevation as well lifts the camera {@value #FLOOR_ELEVATION}
+     * degrees past that plane, onto the side the opening faces, which is
+     * somebody looking across a room at something on the ground. Stopping
+     * short of the quarter turn instead — ninety less ten — lowers the camera
+     * by the same ten the other way, under the table, where the frame is a
+     * lid seen from beneath and nothing can be seen inside it. Both signs of
+     * eighty are that picture; the number has to pass ninety, not approach
+     * it.</p>
+     *
+     * <p>Not the quarter turn itself either, which looks straight down the
+     * frame's own plane and draws an edge rather than a scene.</p>
+     *
+     * <p>Paired with {@link #mountYaw}: this reads as an elevation only from
+     * a camera at yaw zero, so the two are chosen together.</p>
+     */
+    public static final float FLOOR_PITCH = 90.0F + FLOOR_ELEVATION;
+
+    /** The camera angle for one of the two mountings. */
+    public static float mountPitch(boolean onFloor) {
+        return onFloor ? FLOOR_PITCH : WALL_PITCH;
+    }
+
+    /**
+     * Which side of the frame the camera stands on, for one of the two
+     * mountings.
+     *
+     * <p>Always the side the frame opens towards; it is only the mounting
+     * that decides where that is. A frame on a wall opens at the viewer, and
+     * because {@code block/item_frame} is modelled against the back of its
+     * cell — plate at z 15.5 to 16, border standing proud of it down to 15 —
+     * the opening faces -Z and the camera has to go round to {@link
+     * #FRAME_YAW} to be in front of it rather than behind. A frame lying flat
+     * opens at the sky, so the camera is beside it either way, and the half
+     * turn is spent instead on the side the model faces: a pack stands its
+     * models up for a floor frame with a {@code fixed} rotation of -90 about
+     * X, which lays the model's front onto the item's +Y, and the camera at
+     * yaw zero is the one looking at it.</p>
+     */
+    public static float mountYaw(boolean onFloor) {
+        return onFloor ? 0.0F : FRAME_YAW;
+    }
+
+    /**
+     * How much smaller than its model an item is drawn inside a frame.
+     *
+     * <p>A half, which is what the game does: a sixteen-unit model is drawn
+     * eight units across in a frame, which is why an ordinary item sits
+     * comfortably inside one.</p>
+     */
+    public static final float FRAMED_ITEM_SCALE = 0.5F;
+
+    /**
+     * The turn that puts the camera in front of a frame on a wall rather than
+     * behind it.
+     *
+     * <p>{@code block/item_frame} is modelled against the back of its cell:
+     * the plate spans z 15.5 to 16 and the border stands proud of it down to
+     * 15, so the frame opens towards -Z and the camera, which looks down -Z,
+     * starts out behind it. A view from behind is a mirror, which is why the
+     * eight positions ran anticlockwise: not because the spin was computed
+     * the wrong way round, but because it was being watched from the back of
+     * the wall.</p>
+     */
+    public static final float FRAME_YAW = 180.0F;
+
+    /**
+     * How a frame and the item in it are drawn as one scene.
+     *
+     * @param extent  how much of the world the picture covers, in model units
+     * @param frameAt where the frame's own render is centred
+     * @param itemAt  where the item's render is centred, in the item's units
+     */
+    public record Placement(float extent, Rasterizer.View.Anchor frameAt,
+                            Rasterizer.View.Anchor itemAt) {
+
+        /** What the item's render asks for, it being drawn half the size. */
+        public float itemExtent() {
+            return extent / FRAMED_ITEM_SCALE;
+        }
+    }
+
+    /**
+     * Where to put a frame and the item in it so they read as one thing.
+     *
+     * <p>Two things have to be true at once, and each was got wrong on its
+     * own first.</p>
+     *
+     * <p><b>One scale.</b> Every other preview is fitted to its own image, so
+     * a model the size of a house and a model the size of a pea both fill the
+     * card — right when the picture is of one thing and a lie when it is
+     * of two. Fitted together, a model that would swallow an item frame is
+     * shown swallowing one.</p>
+     *
+     * <p><b>One place.</b> Scale alone is not enough: centred on themselves,
+     * the two are drawn through each other, and the frame comes out as a bar
+     * across the middle of the model rather than the thing it sits in. So the
+     * item is laid against the frame's face, on the frame's axis and on the
+     * side it opens towards — which for a frame on a wall puts the model in
+     * front of it, and for one lying flat puts the frame underneath, like an
+     * ornament on a table.</p>
+     *
+     * <p>The scene is then fitted as a whole, which is why this returns the
+     * extent rather than taking it. Fitting to the frame alone was enough
+     * while the two shared a centre; once the item stands on the frame
+     * instead of inside it, the pair is half as tall again and a tall model
+     * ran off the top of the picture.</p>
+     *
+     * <p>The item's reach is taken as the sweep of its box about the frame's
+     * axis, because it turns about that axis through the eight positions and
+     * a fit that ignored the turn would let a long model swing out of view at
+     * forty-five degrees.</p>
+     *
+     * @param frameBox the frame's box in item units, from
+     *                 {@link Rasterizer#boundsOf}
+     * @param itemBox  the item's box, under its own {@code fixed} transform
+     */
+    public static Placement place(float[] frameBox, float[] itemBox) {
+        float scale = FRAMED_ITEM_SCALE;
+        // The item's back against the frame's face, on the side the frame
+        // opens towards. A frame's plate is at the back of its block cell and
+        // its border stands proud of it towards -Z, so the opening faces -Z
+        // and the item goes below the plate's smallest z, not above its
+        // largest. Getting this the wrong way round put the camera behind the
+        // frame, which is a mirror: the eight positions ran backwards and a
+        // model the pack had stood up came out head first into the plate.
+        float lift = frameBox[2] - itemBox[5] * scale;
+
+        float reachX = Math.max(Math.abs(itemBox[0]), Math.abs(itemBox[3]));
+        float reachY = Math.max(Math.abs(itemBox[1]), Math.abs(itemBox[4]));
+        float sweep = (float) Math.hypot(reachX, reachY) * scale;
+        float halfX = Math.max(
+                Math.max(Math.abs(frameBox[0]), Math.abs(frameBox[3])), sweep);
+        float halfY = Math.max(
+                Math.max(Math.abs(frameBox[1]), Math.abs(frameBox[4])), sweep);
+        float lowZ = Math.min(frameBox[2], lift + itemBox[2] * scale);
+        float highZ = Math.max(frameBox[5], lift + itemBox[5] * scale);
+        float middleZ = (lowZ + highZ) * 0.5F;
+        float halfZ = (highZ - lowZ) * 0.5F;
+
+        float extent = Math.max(0.001F, (float) Math.sqrt(
+                halfX * halfX + halfY * halfY + halfZ * halfZ));
+        return new Placement(extent,
+                new Rasterizer.View.Anchor(0.0F, 0.0F, middleZ),
+                new Rasterizer.View.Anchor(0.0F, 0.0F, (middleZ - lift) / scale));
+    }
+
+    /**
+     * The item alone, for a pack whose frame cannot be drawn.
+     *
+     * <p>Fitted and centred on itself, which is what every other preview
+     * does. The pair's shared scale is the better picture, and a blank panel
+     * is not a price worth paying for missing it.</p>
+     */
+    public static Placement alone(float[] itemBox) {
+        float reach = 0.0F;
+        for (int axis = 0; axis < 3; axis++) {
+            float half = (itemBox[axis + 3] - itemBox[axis]) * 0.5F;
+            float middle = (itemBox[axis + 3] + itemBox[axis]) * 0.5F;
+            reach += (half + Math.abs(middle)) * (half + Math.abs(middle));
+        }
+        return new Placement(
+                Math.max(0.001F, (float) Math.sqrt(reach)) * FRAMED_ITEM_SCALE,
+                null, null);
+    }
+
+    /**
+     * A model's box as a frame would hold it, or null while it is measured.
+     *
+     * <p>Measured from the built mesh, which is the only thing that knows:
+     * a resolved model keeps the count of its cuboids and not the cuboids
+     * themselves, deliberately, because keeping them cost hundreds of
+     * megabytes on a large pack. So the first ask for a model that has never
+     * been drawn queues an ordinary render to get the mesh built, returns
+     * nothing, and the view asks again next frame.</p>
+     *
+     * <p>A box rather than a radius, because the pair needs both halves of
+     * what a box says: how big to draw the model, and where its back is. A
+     * sphere has no back.</p>
+     */
+    private float[] framedBox(LogicalModel model, int stateIndex, int size,
+                              ResolvedModel resolved) {
+        float[] known = itemBoxes.get(resolved.modelId());
+        if (known != null) {
+            return known;
+        }
+        Mesh mesh;
+        synchronized (meshes) {
+            mesh = meshes.get(resolved.modelId());
+        }
+        if (mesh == null) {
+            // Nothing measures a model that has not been built, so ask for the
+            // picture that builds it. The ordinary still is the cheapest one
+            // and is wanted anyway: it is what the card behind this view
+            // shows.
+            request(model, stateIndex, size, false, 0.0F, 0.0F, 1.0F, 0, Shot.GUI);
+            return null;
+        }
+        float[] measured = Rasterizer.boundsOf(mesh, resolved.transform("fixed"));
+        itemBoxes.put(resolved.modelId(), measured);
+        return measured;
+    }
+
+    /**
+     * The frame model's box, measured once.
+     *
+     * <p>This asks for its own measurement rather than waiting for one, and
+     * that is the whole of it. Waiting was a deadlock: the frame is not drawn
+     * until the shared scale is known, the scale needs this measurement,
+     * it is read off the frame's built mesh, and the only thing that built
+     * that mesh was the render that was waiting for the scale. Every model's
+     * framed view sat on "Rendering..." for ever, and nothing in the log said
+     * why, because nothing had failed — three correct steps in a ring.</p>
+     *
+     * <p>The item half of the pair never had the problem: its mesh is built by
+     * the ordinary card still, which is wanted anyway. The frame model is in no
+     * pack's index and no card asks for it, so it has to be asked for here.</p>
+     */
+    private float[] frameBounds() {
+        if (frameBox != null) {
+            return frameBox;
+        }
+        Mesh mesh = null;
+        ResolvedModel frame = frameModel;
+        if (frame != null) {
+            synchronized (meshes) {
+                mesh = meshes.get(frame.modelId());
+            }
+        }
+        if (mesh == null) {
+            measureFrame();
+            return null;
+        }
+        frameBox = Rasterizer.boundsOf(mesh, ModelJson.Transform.IDENTITY);
+        return frameBox;
+    }
+
+    /**
+     * Builds the frame's mesh so it can be measured, once.
+     *
+     * <p>On the worker pool, because building a mesh walks the model and reads
+     * its textures and that is not work for the frame the player is looking
+     * at. Counted against the same budget the drawn frame uses: a pack whose
+     * item frame cannot be read gives up rather than asking again for the rest
+     * of the session.</p>
+     */
+    private void measureFrame() {
+        if (frameGaveUp() || measuringFrame) {
+            return;
+        }
+        ResourceSource resources = source;
+        dev.custommodels.cmv.explorer.res.ModelResolver resolver = meshResolver;
+        if (resources == null || resolver == null) {
+            return;
+        }
+        if (frameModel == null) {
+            frameModel = resolver.resolve(ITEM_FRAME_MODEL);
+        }
+        ResolvedModel frame = frameModel;
+        if (frame == null || frame.isEmpty()) {
+            frameTries = FRAME_TRIES + 1;
+            return;
+        }
+        if (!ensureTextures(frame)) {
+            // Its textures are being read. Counted, so "ask again next frame"
+            // runs out rather than going round for ever.
+            frameTries++;
+            return;
+        }
+        measuringFrame = true;
+        pool().execute(() -> {
+            try {
+                Mesh mesh = meshFor(frame, resources);
+                if (mesh != null && !mesh.isEmpty()) {
+                    frameBox = Rasterizer.boundsOf(mesh, ModelJson.Transform.IDENTITY);
+                }
+            } catch (RuntimeException | OutOfMemoryError e) {
+                CmvMod.LOGGER.warn("Item frame measurement failed", e);
+            } finally {
+                measuringFrame = false;
+            }
+        });
+    }
+
+    /**
+     * Whether the measurement is already on the pool.
+     *
+     * <p>Its own flag rather than a key in the in-flight set, because that set
+     * holds the keys of pictures being drawn and this draws nothing. Asked for
+     * only from the render thread, so one flag is enough; volatile for the
+     * worker that clears it.</p>
+     */
+    private volatile boolean measuringFrame;
+
+    /** What each model measured, so it is measured once rather than per frame. */
+    private final java.util.Map<String, float[]> itemBoxes =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The frame's own box in item units, measured once. */
+    private volatile float[] frameBox;
+
+    /** The model the game draws an item frame with. */
+    private static final String ITEM_FRAME_MODEL = "minecraft:block/item_frame";
+
+    /** That model, resolved once, or null until it has been asked for. */
+    private volatile ResolvedModel frameModel;
+
+    /**
+     * How many frames the backdrop has been waited on.
+     *
+     * <p>Texture reads are spread over frames by design, so a first answer of
+     * "not yet" is normal and has to be retried. A hundredth answer of "not
+     * yet" is a pack that cannot draw a frame, and retrying that for the rest
+     * of the session is the per-frame work this counter exists to stop.</p>
+     */
+    private int frameTries;
+
+    /** How many frames to wait for the backdrop before leaving it out. */
+    private static final int FRAME_TRIES = 100;
+
+    /**
+     * A model as an item frame would hold it, in one of the frame's eight
+     * positions.
+     *
+     * <p>Two things make this a different picture from the ordinary preview
+     * rather than the same one turned round. The transform is {@code fixed},
+     * which is the one Minecraft uses for a framed item and which a pack is
+     * free to set to something quite unlike its {@code gui} entry — so this
+     * is the view that answers "does my model sit right in a frame", a
+     * question the inventory render cannot. And the turn is a roll about the
+     * axis pointing at the viewer, because the frame hangs on a wall facing
+     * you and its positions spin the item in the plane of that wall.</p>
+     *
+     * <p>The camera does not move: every position is the same head-on view of
+     * a frame on a wall.</p>
+     *
+     * @param slot which of the eight positions, counted the way the frame
+     *             counts them, 45 degrees apart
+     * @return the texture, or the last position drawn at this size while this
+     *         one renders, or null when nothing has been drawn yet
+     */
+    public Identifier framed(LogicalModel model, int stateIndex, int size, int slot,
+                             int tick, boolean onFloor) {
+        ResolvedModel resolved = model.states()
+                .get(Math.min(stateIndex, model.states().size() - 1)).resolved();
+        int period = animationPeriod(resolved);
+        int animTick = period > 1 ? Math.floorMod(tick, period) : 0;
+        Placement placed = placementFor(model, stateIndex, size, resolved);
+        if (placed == null) {
+            // Still measuring. The measurement queues the render that builds
+            // the mesh, so this resolves itself within a frame or two.
+            return mostRecentWith(shotPrefix(model, stateIndex, size) + mounting(onFloor));
+        }
+        Shot shot = new Shot("fixed",
+                Math.floorMod(slot, FRAME_POSITIONS) * (360.0F / FRAME_POSITIONS),
+                mountPitch(onFloor), placed.itemExtent(), placed.itemAt());
+        String key = shotKey(model, stateIndex, size, shot, animTick);
+        seenThisFrame.add(key);
+        Identifier existing = textures.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        request(model, stateIndex, size, false, mountYaw(onFloor), 0.0F, 1.0F,
+                animTick, shot);
+        // Eight positions at one size is a small enough set to hold, so
+        // stepping through them is instant after the first pass round. Until
+        // then the position before it is shown rather than a message: the
+        // cycle moves on its own, and a word appearing for one position in
+        // eight reads as a fault rather than as work in progress.
+        return mostRecentWith(shotPrefix(model, stateIndex, size) + mounting(onFloor));
+    }
+
+    /**
+     * The item frame itself, drawn face-on, to put the model inside.
+     *
+     * <p>The game's own {@code block/item_frame} rather than a drawing of one,
+     * so it is birch planks and the frame's own backing texture, and so a pack
+     * that reskins item frames shows its own frame here. Resolved on demand
+     * through the mesh resolver, which is the same path the models themselves
+     * take; a pack with no frame texture simply means this returns null and
+     * the view draws the model without it.</p>
+     */
+    public Identifier itemFrame(LogicalModel model, int stateIndex, int size,
+                                boolean onFloor) {
+        ResolvedModel resolved = model.states()
+                .get(Math.min(stateIndex, model.states().size() - 1)).resolved();
+        Placement placed = placementFor(model, stateIndex, size, resolved);
+        if (placed == null || placed.frameAt() == null) {
+            return null;
+        }
+        // The frame's picture depends on the item now, because the two are
+        // drawn to one scale: a frame beside a model that dwarfs it is a
+        // smaller frame. So the item's measurement is part of the key.
+        String key = "itemframe/" + size + "/" + mounting(onFloor)
+                + "/x" + Math.round(placed.extent() * 16.0F);
+        seenThisFrame.add(key);
+        Identifier existing = textures.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        if (frameGaveUp()) {
+            // Given up on. Without this the view would resolve a model and
+            // walk its textures on every frame, for ever, for a pack whose
+            // frame cannot be drawn at all - which is the one case where the
+            // work is both useless and unending.
+            return null;
+        }
+        ResourceSource resources = source;
+        dev.custommodels.cmv.explorer.res.ModelResolver resolver = meshResolver;
+        if (resources == null || resolver == null || !inFlight.add(key)) {
+            return null;
+        }
+        // Resolved once and kept. Resolving reads the model and walks its
+        // parents, which is not work to repeat per frame while the first
+        // render is in flight.
+        if (frameModel == null) {
+            frameModel = resolver.resolve(ITEM_FRAME_MODEL);
+        }
+        ResolvedModel frame = frameModel;
+        if (frame == null || frame.isEmpty()) {
+            frameTries = FRAME_TRIES + 1;
+            inFlight.remove(key);
+            return null;
+        }
+        if (!ensureTextures(frame)) {
+            // Its textures are being read; ask again next frame. Counted,
+            // because "next frame" has to run out eventually.
+            frameTries++;
+            inFlight.remove(key);
+            return null;
+        }
+        rendersRequested++;
+        pool().execute(() -> {
+            try {
+                Mesh mesh = meshFor(frame, resources);
+                if (mesh == null || mesh.isEmpty()) {
+                    return;
+                }
+                // Face-on and unturned: the frame is the backdrop and only the
+                // item inside it moves.
+                // Unturned, and hung the way the item inside it is: a
+                // tilted item in an untilted frame is two pictures of two
+                // different frames.
+                Pixels rendered = renderStill(mesh, frame, size, mountYaw(onFloor),
+                        0.0F, 1.0F, 0,
+                        new Shot("fixed", 0.0F, mountPitch(onFloor),
+                                placed.extent(), placed.frameAt()));
+                synchronized (uploadQueue) {
+                    uploadQueue.add(new Ready(key, rendered));
+                }
+            } catch (RuntimeException | OutOfMemoryError e) {
+                rendersFailed++;
+                CmvMod.LOGGER.warn("Item frame render failed", e);
+            } finally {
+                inFlight.remove(key);
+            }
+        });
+        return null;
+    }
+
+    /**
+     * The transform Minecraft would use to draw this model in an inventory
+     * slot, so a still preview matches what the game shows.
+     *
+     * <p>Still the right answer for the animation strip and for an exported
+     * image, which are both the inventory view in motion. The framed view
+     * asks for {@code fixed} instead, through its own shot.</p>
+     */
+    private static ModelJson.Transform guiTransform(ResolvedModel resolved) {
+        return resolved.transform("gui");
+    }
+
+    private static String shotPrefix(LogicalModel model, int stateIndex, int size) {
+        return model.canonicalId() + "/" + stateIndex + "/" + size + "/r";
+    }
+
+    /**
+     * How this model and a frame are drawn together, or null while either of
+     * them is still being measured.
+     */
+    private Placement placementFor(LogicalModel model, int stateIndex, int size,
+                                   ResolvedModel resolved) {
+        float[] item = framedBox(model, stateIndex, size, resolved);
+        if (item == null) {
+            return null;
+        }
+        float[] frame = frameBounds();
+        if (frame != null) {
+            return place(frame, item);
+        }
+        return frameGaveUp() ? alone(item) : null;
+    }
+
+    /** Whether the frame has been waited on as long as it is going to be. */
+    private boolean frameGaveUp() {
+        return frameTries > FRAME_TRIES;
+    }
+
+    private static String shotKey(LogicalModel model, int stateIndex, int size,
+                                  Shot shot, int tick) {
+        // The mounting is in the prefix rather than after the spin, so that the
+        // fallback while a position renders can ask for "any position of this
+        // model at this size on this mounting" and not be handed the other
+        // mounting's picture.
+        return shotPrefix(model, stateIndex, size) + mounting(shot.pitch() != WALL_PITCH)
+                + shot.context() + (int) shot.spin()
+                + "x" + Math.round(shot.extent() * 16.0F)
+                + (tick == 0 ? "" : "_t" + tick);
+    }
+
+    private static String mounting(boolean onFloor) {
+        return onFloor ? "floor" : "wall";
+    }
+
     private Identifier mostRecentFor(LogicalModel model, int stateIndex, int size) {
-        String prefix = detailPrefix(model, stateIndex, size);
+        return mostRecentWith(detailPrefix(model, stateIndex, size));
+    }
+
+    private Identifier mostRecentWith(String prefix) {
         String bestKey = null;
         Identifier best = null;
         for (Map.Entry<String, Identifier> entry : textures.entrySet()) {
@@ -537,8 +1085,39 @@ public final class PreviewService {
 
     private void request(LogicalModel model, int stateIndex, int size, boolean strip,
                          float yaw, float pitch, float zoom, int tick) {
+        request(model, stateIndex, size, strip, yaw, pitch, zoom, tick, Shot.GUI);
+    }
+
+    /**
+     * Which display transform a render uses, and how far it is rolled.
+     *
+     * <p>Two renders of one model at one size and one angle are still
+     * different pictures when these differ, so they are part of the cache key.
+     * Without that, a frame render at the default angle and the plain still at
+     * the default angle have the same key and whichever arrived first is what
+     * both views show.</p>
+     */
+    private record Shot(String context, float spin, float pitch, float extent,
+                        Rasterizer.View.Anchor anchor) {
+
+        Shot(String context, float spin, float pitch, float extent) {
+            this(context, spin, pitch, extent, null);
+        }
+
+        static final Shot GUI = new Shot("gui", 0.0F, 0.0F, 0.0F);
+
+        boolean isGui() {
+            return spin == 0.0F && pitch == 0.0F && extent == 0.0F
+                    && "gui".equals(context);
+        }
+    }
+
+    private void request(LogicalModel model, int stateIndex, int size, boolean strip,
+                         float yaw, float pitch, float zoom, int tick, Shot shot) {
         String key = strip
                 ? key(model, stateIndex, size, true)
+                : !shot.isGui()
+                ? shotKey(model, stateIndex, size, shot, tick)
                 : (yaw == 0 && pitch == 0 && zoom == 1.0F && tick == 0
                 ? key(model, stateIndex, size, false)
                 : detailKey(model, stateIndex, size, yaw, pitch, zoom, tick));
@@ -586,7 +1165,7 @@ public final class PreviewService {
                 }
                 Pixels rendered = strip
                         ? renderAnimation(mesh, resolved, size)
-                        : renderStill(mesh, resolved, size, yaw, pitch, zoom, tick);
+                        : renderStill(mesh, resolved, size, yaw, pitch, zoom, tick, shot);
                 synchronized (uploadQueue) {
                     uploadQueue.add(new Ready(key, rendered));
                 }
@@ -600,7 +1179,7 @@ public final class PreviewService {
     }
 
     private Pixels renderStill(Mesh mesh, ResolvedModel resolved, int size,
-                               float yaw, float pitch, float zoom, int tick) {
+                               float yaw, float pitch, float zoom, int tick, Shot shot) {
         // Supersampling costs its square, and it only helps when the render is
         // coarser than the screen. Previews are now sized from the GUI scale, so
         // at anything from a normal card upwards they are already at the
@@ -609,7 +1188,9 @@ public final class PreviewService {
         // without. It is kept only for the genuinely small renders.
         int supersample = size >= 96 ? 1 : 2;
         Rasterizer.View view = new Rasterizer.View(size, size, supersample,
-                yaw, pitch, zoom, guiTransform(resolved), resolved.guiLightFront(), 0, tick);
+                yaw, pitch + shot.pitch(), zoom, resolved.transform(shot.context()),
+                resolved.guiLightFront(), 0, tick, shot.spin(), shot.extent(),
+                shot.anchor());
         return new Pixels(size, size, Rasterizer.render(mesh, view));
     }
 
@@ -643,14 +1224,6 @@ public final class PreviewService {
             System.arraycopy(rendered, 0, pixels, frame * size * size, size * size);
         }
         return new Pixels(size, size * frames, pixels);
-    }
-
-    /**
-     * The transform Minecraft would use to draw this model in an inventory
-     * slot, so a still preview matches what the game shows.
-     */
-    private static ModelJson.Transform guiTransform(ResolvedModel resolved) {
-        return resolved.transform("gui");
     }
 
     /**
@@ -845,23 +1418,6 @@ public final class PreviewService {
     }
 
     /**
-     * The tick count a model's textures repeat on, for a caller outside here.
-     *
-     * <p>So an export can be made to loop: an animation that stops part way
-     * through a flicker jumps when it starts again, and the length it has to
-     * be a whole number of is this.</p>
-     *
-     * @return 1 when nothing animates, which needs no accommodating
-     */
-    public int animationPeriod(LogicalModel model, int stateIndex) {
-        if (model == null || model.states().isEmpty()) {
-            return 1;
-        }
-        ModelState state = model.states().get(Math.min(stateIndex, model.states().size() - 1));
-        return animationPeriod(state.resolved());
-    }
-
-    /**
      * The tick count several states' textures all repeat on, together.
      *
      * <p>For an export that walks a model's draw stages: each stage has its
@@ -886,6 +1442,23 @@ public final class PreviewService {
             }
         }
         return period;
+    }
+
+    /**
+     * The tick count a model's textures repeat on, for a caller outside here.
+     *
+     * <p>So an export can be made to loop: an animation that stops part way
+     * through a flicker jumps when it starts again, and the length it has to
+     * be a whole number of is this.</p>
+     *
+     * @return 1 when nothing animates, which needs no accommodating
+     */
+    public int animationPeriod(LogicalModel model, int stateIndex) {
+        if (model == null || model.states().isEmpty()) {
+            return 1;
+        }
+        ModelState state = model.states().get(Math.min(stateIndex, model.states().size() - 1));
+        return animationPeriod(state.resolved());
     }
 
     private ExecutorService pool() {
@@ -1041,23 +1614,29 @@ public final class PreviewService {
     }
 
     /**
-     * The longest cycle that will be cached whole.
+     * Whether any of a model's textures is a strip of frames.
      *
-     * <p>Two textures whose periods share no factor multiply out, and a pair
-     * of unlucky primes would ask for a cycle thousands of frames long that
-     * would never finish caching and would fill the budget trying. Past the
-     * cap the cycle is allowed to be imperfect, which costs a visible jump
-     * once every thirty seconds on a model nobody has yet shipped.</p>
+     * <p>Answered from what has already been read rather than by opening
+     * anything: an animated texture declares itself in its {@code .mcmeta}
+     * sidecar, which is read with the bytes, so the answer is a map lookup per
+     * texture. Before the first read it is "no", which costs one extra render
+     * when the answer turns out to be yes.</p>
      */
-    private static final int LONGEST_CYCLE = 600;
-
     /**
      * The tick count a model's textures repeat on, or 1 when none animates.
      *
      * <p>The least common multiple of each animated texture's own period, so a
      * model wearing a four-frame texture and a six-frame one comes back round
      * on twelve rather than appearing to drift.</p>
+     *
+     * <p>Capped. Two textures whose periods share no factor multiply out, and
+     * a pair of unlucky primes would ask for a cycle thousands of frames long
+     * that would never finish caching and would fill the budget trying. Past
+     * the cap the cycle is allowed to be imperfect, which costs a visible jump
+     * once every thirty seconds on a model nobody has yet shipped.</p>
      */
+    private static final int LONGEST_CYCLE = 600;
+
     int animationPeriod(ResolvedModel resolved) {
         int period = 1;
         // The slot map's own values, not distinctTextures(), which builds a
@@ -1133,8 +1712,10 @@ public final class PreviewService {
     }
 
     private static int lcm(int a, int b) {
-        long gcd = Math.min(a, b);
-        long other = Math.max(a, b);
+        long low = Math.min(a, b);
+        long high = Math.max(a, b);
+        long gcd = low;
+        long other = high;
         while (gcd != 0) {
             long rest = other % gcd;
             other = gcd;
@@ -1194,5 +1775,22 @@ public final class PreviewService {
             }
         }
         return Math.max(16, Math.min(cap, want));
+    }
+
+    private boolean hasAnimatedTexture(ResolvedModel resolved) {
+        for (String textureId : resolved.distinctTextures()) {
+            if (textureId == null) {
+                continue;
+            }
+            ResourceSource.Image decoded = textureCache.get(textureId);
+            if (decoded != null && decoded.frames() > 1) {
+                return true;
+            }
+            ResourceSource.TextureBytes raw = rawTextures.get(textureId);
+            if (raw != null && raw.frameHeight() != Integer.MAX_VALUE) {
+                return true;
+            }
+        }
+        return false;
     }
 }
