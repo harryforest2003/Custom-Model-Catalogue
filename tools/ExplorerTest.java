@@ -2606,12 +2606,50 @@ public final class ExplorerTest {
                 like.stream().noneMatch(id -> id.endsWith("tower")));
 
         // Order carries the confidence: the tiers are the answer's ranking, so
-        // an exact match must not be buried behind a weaker one.
+        // an exact match must not be buried behind a weaker one. Nothing
+        // outranks identical geometry, which is the same model in another
+        // skin rather than a resemblance.
         java.util.List<String> ordered = new java.util.ArrayList<>(like);
         int shape = indexEndingWith(ordered, "sword_red");
-        int sheet = indexEndingWith(ordered, "hat_blue");
-        check("the identical shape comes before the shared textures",
-                shape > 0 && sheet > shape);
+        int weaker = indexEndingWith(ordered, "hat_blue");
+        check("the identical shape leads the answer",
+                shape > 0 && weaker > shape);
+
+        // A named family before matching colours, which is the order the
+        // question is asked in and the other way round from how this shipped.
+        // The lamp is cut from the subject's own texture - the same colours,
+        // exactly - and the cat shares nothing with it but the word. Asked
+        // what else is like a plush, somebody means the other plush.
+        MemorySource toys = new MemorySource();
+        toys.model("p:item/otter_plush",
+                "{\"elements\":" + cube + ",\"textures\":{\"all\":\"p:brown\"}}");
+        toys.model("p:item/cat_plush",
+                "{\"elements\":" + many + ",\"textures\":{\"all\":\"p:grey\"}}");
+        toys.model("p:item/lamp",
+                "{\"elements\":" + slab + ",\"textures\":{\"all\":\"p:brown\"}}");
+        toys.texture("p:brown", 16, 16);
+        toys.texture("p:grey", 16, 16);
+        List<LogicalModel> toybox = build(toys, "minecraft:paper", """
+                {"model":{"type":"minecraft:select","property":"minecraft:custom_model_data",
+                  "cases":[
+                    {"when":"o","model":{"type":"minecraft:model","model":"p:item/otter_plush"}},
+                    {"when":"c","model":{"type":"minecraft:model","model":"p:item/cat_plush"}},
+                    {"when":"l","model":{"type":"minecraft:model","model":"p:item/lamp"}}]}}
+                """);
+        check("the three toys are distinct cards", toybox.size() == 3);
+        java.util.List<String> byName = new java.util.ArrayList<>(
+                ExplorerQuery.alike(toybox, pick(toybox, "otter_plush")));
+        check("both the named one and the same-coloured one answer",
+                byName.size() == 3);
+        int named = indexEndingWith(byName, "cat_plush");
+        int coloured = indexEndingWith(byName, "lamp");
+        check("a shared name comes before a shared texture",
+                named > 0 && coloured > named);
+        // The texture really is identical, or the check above would be
+        // comparing the name tier against nothing.
+        check("and the lamp is there on the texture rather than the name",
+                pick(toybox, "lamp").textureHash()
+                        .equals(pick(toybox, "otter_plush").textureHash()));
 
         // A vanilla parent must not count as a template, or every generated
         // sprite in the game would be a relative of every other.

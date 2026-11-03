@@ -55,17 +55,26 @@ public record ExplorerQuery(String text,
      *
      * <ol>
      *   <li><b>The same shape.</b> Identical geometry hash.</li>
+     *   <li><b>A name in common.</b> They share a word that is not the whole
+     *       pack's vocabulary \u2014 most words shared first, then rarest.</li>
      *   <li><b>The same textures.</b> Identical texture hash.</li>
      *   <li><b>The same template.</b> Both inherit one of the pack's own
      *       parent models.</li>
-     *   <li><b>A name in common.</b> They share a word that is not the whole
-     *       pack's vocabulary \u2014 most words shared first, then rarest.</li>
      *   <li><b>The same folder</b>, where the folder is a folder and not the
      *       place the pack puts everything.</li>
      *   <li><b>A shared sheet</b>, where the sheet is not the pack's palette.</li>
      * </ol>
      *
-     * <p>The fourth tier is the one that works on a real pack, and it took
+     * <p>The name comes second, above both the tiers that answer with a
+     * texture, because that is the order the question is asked in. Somebody
+     * looking for what else is like their elf plush means the other plushes,
+     * and an item that happens to be cut from the same sheet \u2014 which is
+     * to say an item of about the same colours \u2014 is a weaker answer than
+     * one the pack author named into the same family. Identical geometry stays
+     * above it: that is not a resemblance but the same model in another skin,
+     * and no name beats it.</p>
+     *
+     * <p>The name tier is the one that works on a real pack, and it took
      * measuring one to find that out. Two plushes a player called obviously
      * similar had bounding boxes of 10x25x16 and 9x12x10 and 24 cuboids
      * against 15: the elf's hat alone makes it twice as tall as the other, so
@@ -164,14 +173,6 @@ public record ExplorerQuery(String text,
                 sameShape.add(other);
                 continue;
             }
-            if (!textures.isEmpty() && textures.equals(model.textureHash())) {
-                sameTextures.add(other);
-                continue;
-            }
-            if (!template.isEmpty() && template.equals(templateOf(model))) {
-                sameTemplate.add(other);
-                continue;
-            }
             int rarest = Integer.MAX_VALUE;
             int shared = 0;
             for (String word : tokensOf(model)) {
@@ -185,6 +186,14 @@ public record ExplorerQuery(String text,
             }
             if (shared > 0) {
                 sameName.add(new Named(other, shared, rarest));
+                continue;
+            }
+            if (!textures.isEmpty() && textures.equals(model.textureHash())) {
+                sameTextures.add(other);
+                continue;
+            }
+            if (!template.isEmpty() && template.equals(templateOf(model))) {
+                sameTemplate.add(other);
                 continue;
             }
             if (folderMeansSomething && folder.equals(folderOf(model))) {
@@ -203,11 +212,11 @@ public record ExplorerQuery(String text,
                 .thenComparingInt(Named::rarity));
 
         out.addAll(sameShape);
-        out.addAll(sameTextures);
-        out.addAll(sameTemplate);
         for (Named named : sameName) {
             out.add(named.id());
         }
+        out.addAll(sameTextures);
+        out.addAll(sameTemplate);
         out.addAll(sameFolder);
         out.addAll(sharedSheet);
         return out;
