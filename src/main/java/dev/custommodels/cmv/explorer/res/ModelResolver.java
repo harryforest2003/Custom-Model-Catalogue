@@ -289,7 +289,8 @@ public final class ModelResolver {
                 List.copyOf(layers),
                 Map.copyOf(transforms),
                 guiLightFront != null ? guiLightFront : generated,
-                List.copyOf(warnings));
+                List.copyOf(warnings),
+                List.of());
     }
 
     /**
@@ -462,7 +463,8 @@ public final class ModelResolver {
                 modelId.isEmpty() ? "" : source.modelArchivePath(modelId),
                 "", false, List.of(), Map.of(), List.of(), List.of(), Set.of(), "", 0, "missing",
                 false, List.of(), Map.of(), true,
-                List.of("Model file not found in any loaded pack"));
+                List.of("Model file not found in any loaded pack"),
+                List.of());
     }
 
     private static String nullToEmpty(String value) {

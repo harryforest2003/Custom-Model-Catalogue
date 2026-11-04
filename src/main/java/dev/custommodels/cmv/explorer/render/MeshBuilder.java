@@ -93,8 +93,25 @@ public final class MeshBuilder {
     }
 
     /** Builds a mesh, or an empty one when nothing can be drawn. */
+    /**
+     * Every layer of a model, drawn into one mesh.
+     *
+     * <p>Ordinarily that is the model itself and nothing else. A model
+     * standing for a composite carries the rest of its stack, and they are
+     * drawn together because that is what the game does with one: they are
+     * layers, not alternatives, and the item is only itself with all of
+     * them. The rasterizer sorts by depth, so the order they are added in
+     * decides nothing.</p>
+     */
     public Mesh build(ResolvedModel model) {
         Builder builder = new Builder();
+        for (ResolvedModel layer : model.allLayers()) {
+            addLayer(builder, layer);
+        }
+        return builder.finish();
+    }
+
+    private void addLayer(Builder builder, ResolvedModel model) {
         List<ModelJson.Element> elements = model.hasCuboidGeometry() && resolver != null
                 ? resolver.loadElements(model) : List.of();
         if (!elements.isEmpty()) {
@@ -106,7 +123,6 @@ public final class MeshBuilder {
                 addSpriteLayer(builder, layer);
             }
         }
-        return builder.finish();
     }
 
     // ------------------------------------------------------------- cuboids

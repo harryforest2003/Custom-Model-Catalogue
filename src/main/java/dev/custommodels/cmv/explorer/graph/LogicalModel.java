@@ -275,9 +275,19 @@ public final class LogicalModel {
         if (states.size() < 2) {
             return List.of();
         }
+        // One context's worth of states. Where an item is being drawn is not
+        // a moment in time: a pack that gives the inventory one overlay and
+        // the world another has every stage of a pull twice over, and played
+        // as frames that walks the pull twice. Worse, it gives an item with
+        // no stages at all two frames and sets it flickering between two
+        // pictures of itself. So the frames are the states that stand where
+        // the card stands.
+        String context = displayContext(states.get(
+                Math.min(defaultStateIndex, states.size() - 1)));
         List<Integer> frames = new java.util.ArrayList<>(states.size());
         for (int i = 0; i < states.size(); i++) {
-            if (!isCompositeMember(states.get(i))) {
+            if (!isCompositeMember(states.get(i))
+                    && context.equals(displayContext(states.get(i)))) {
                 frames.add(i);
             }
         }
@@ -294,6 +304,22 @@ public final class LogicalModel {
                 })
                 .thenComparingInt(i -> i));
         return frames;
+    }
+
+    /**
+     * Which display context a state belongs to, or {@code ""} for none.
+     *
+     * <p>Two states that differ only in this are the same moment of the item
+     * drawn in two places, not two moments.</p>
+     */
+    private static String displayContext(ModelState state) {
+        for (Selector step : state.steps()) {
+            if (step.kind() == Selector.Kind.SELECT
+                    && "display_context".equals(step.shortProperty())) {
+                return step.branch() + ":" + step.values();
+            }
+        }
+        return "";
     }
 
     private static boolean isCompositeMember(ModelState state) {

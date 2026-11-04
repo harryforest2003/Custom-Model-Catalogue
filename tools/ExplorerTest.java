@@ -363,14 +363,20 @@ public final class ExplorerTest {
                 frames.stream().map(i -> dragon.states().get(i).label()).toList()
                         .equals(List.of("Default", "Pull 1", "Pull 2", "Pull 3")));
 
-        // A composite's states are parts drawn together. Playing them would
-        // take the model apart, so it is not played at all — which is almost
-        // every multi-state model there is.
+        // A composite's members are parts drawn together, so they are one
+        // state with the parts laid over each other rather than several
+        // states to step between.
         MemorySource parts = new MemorySource();
         parts.model("p:item/part_a",
                 "{\"parent\":\"minecraft:item/generated\",\"textures\":{\"layer0\":\"p:a\"}}");
         parts.model("p:item/part_b",
                 "{\"parent\":\"minecraft:item/generated\",\"textures\":{\"layer0\":\"p:b\"}}");
+        parts.model("p:item/part_c",
+                "{\"parent\":\"minecraft:item/generated\",\"textures\":{\"layer0\":\"p:c\"}}");
+        parts.solidTexture("p:c", 16, 16, 0xFF44AA44);
+        parts.model("p:item/part_c",
+                "{\"parent\":\"minecraft:item/generated\",\"textures\":{\"layer0\":\"p:c\"}}");
+        parts.solidTexture("p:c", 16, 16, 0xFF44AA44);
         parts.solidTexture("p:a", 16, 16, 0xFF884422);
         parts.solidTexture("p:b", 16, 16, 0xFF224488);
         List<LogicalModel> composite = build(parts, "minecraft:stick", """
@@ -378,10 +384,168 @@ public final class ExplorerTest {
                   {"type":"minecraft:model","model":"p:item/part_a"},
                   {"type":"minecraft:model","model":"p:item/part_b"}]}}
                 """);
-        check("a composite is one model with its parts as states",
-                composite.size() == 1 && composite.get(0).states().size() == 2);
+        check("a composite is one model, not one per part",
+                composite.size() == 1 && composite.get(0).states().size() == 1);
+        check("and the item is the first layer, not the last",
+                composite.get(0).defaultState().modelId().equals("p:item/part_a"));
+        check("with the rest of the stack laid over it",
+                composite.get(0).defaultState().resolved().overlays().size() == 1
+                        && composite.get(0).defaultState().resolved().overlays()
+                                .get(0).modelId().equals("p:item/part_b"));
         check("its parts are never played as frames",
                 composite.get(0).animationFrames().isEmpty());
+
+        // Drawn together, which is the whole point: a mesh built from the
+        // stack holds every layer's faces, not just the one on top.
+        ModelResolver partResolver = new ModelResolver(parts);
+        Mesh onlyA = new MeshBuilder(parts, new HashMap<>(), partResolver)
+                .build(partResolver.resolve("p:item/part_a"));
+        Mesh stacked = new MeshBuilder(parts, new HashMap<>(), partResolver)
+                .build(composite.get(0).defaultState().resolved());
+        check("a stack draws every layer, not just the top one",
+                stacked.quadCount() == onlyA.quadCount() * 2);
+
+        // The shape a pack uses to animate an item: the same base under two
+        // different overlays, one moving and one still, picked by the
+        // display context. Two states, both of them the item.
+        List<LogicalModel> animated = build(parts, "minecraft:stick", """
+                {"model":{"type":"minecraft:select","property":"minecraft:display_context",
+                  "cases":[{"when":"gui","model":{"type":"minecraft:composite","models":[
+                    {"type":"minecraft:model","model":"p:item/part_a"},
+                    {"type":"minecraft:model","model":"p:item/part_b"}]}}],
+                  "fallback":{"type":"minecraft:composite","models":[
+                    {"type":"minecraft:model","model":"p:item/part_a"},
+                    {"type":"minecraft:model","model":"p:item/part_c"}]}}}
+                """);
+        check("an item animated by an overlay is one card",
+                animated.size() == 1);
+        check("with a state for the still one and a state for the moving one",
+                animated.get(0).states().size() == 2);
+        check("and the card shows the item, not the layer over it",
+                animated.get(0).defaultState().modelId().equals("p:item/part_a"));
+
+        // A member that is itself a choice cannot be folded in, because which
+        // model it stands for is not settled yet. Those keep the old reading.
+        List<LogicalModel> branching = build(parts, "minecraft:stick", """
+                {"model":{"type":"minecraft:composite","models":[
+                  {"type":"minecraft:model","model":"p:item/part_a"},
+                  {"type":"minecraft:select","property":"minecraft:display_context",
+                   "cases":[{"when":"gui","model":{"type":"minecraft:model",
+                     "model":"p:item/part_b"}}],
+                   "fallback":{"type":"minecraft:model","model":"p:item/part_c"}}]}}
+                """);
+        check("a composite holding a choice is still taken apart",
+                branching.get(0).states().size() > 1);
+        // A bow the way a pack that animates its models writes one: every
+        // pull stage is a composite of the stage and an overlay. Taken apart
+        // into a state per layer, every state was a composite member, and
+        // the frame finder skips those - so the bow had no frames at all and
+        // the preview never drew the pull. Folded into stacks, the stages are
+        // ordinary states again and the pull plays.
+        MemorySource bows = new MemorySource();
+        for (String part : List.of("b", "b_over", "b_0", "b_0_over",
+                "b_1", "b_1_over", "b_2", "b_2_over")) {
+            bows.model("p:item/" + part,
+                    "{\"parent\":\"minecraft:item/generated\",\"textures\":{\"layer0\":\"p:t\"}}");
+        }
+        bows.solidTexture("p:t", 16, 16, 0xFF996633);
+        List<LogicalModel> pullBow = build(bows, "minecraft:bow", """
+                {"model":{"type":"minecraft:condition","property":"minecraft:using_item",
+                  "on_false":{"type":"minecraft:composite","models":[
+                    {"type":"minecraft:model","model":"p:item/b"},
+                    {"type":"minecraft:model","model":"p:item/b_over"}]},
+                  "on_true":{"type":"minecraft:range_dispatch",
+                    "property":"minecraft:use_duration","scale":0.05,
+                    "fallback":{"type":"minecraft:composite","models":[
+                      {"type":"minecraft:model","model":"p:item/b_0"},
+                      {"type":"minecraft:model","model":"p:item/b_0_over"}]},
+                    "entries":[
+                      {"threshold":0.65,"model":{"type":"minecraft:composite","models":[
+                        {"type":"minecraft:model","model":"p:item/b_1"},
+                        {"type":"minecraft:model","model":"p:item/b_1_over"}]}},
+                      {"threshold":0.9,"model":{"type":"minecraft:composite","models":[
+                        {"type":"minecraft:model","model":"p:item/b_2"},
+                        {"type":"minecraft:model","model":"p:item/b_2_over"}]}}]}}}
+                """);
+        check("a bow whose stages are stacks is still one bow",
+                pullBow.size() == 1 && pullBow.get(0).states().size() == 4);
+        check("and every stage shows the stage, not the layer over it",
+                pullBow.get(0).states().stream().map(ModelState::modelId).toList()
+                        .containsAll(List.of("p:item/b", "p:item/b_0",
+                                "p:item/b_1", "p:item/b_2")));
+        List<Integer> pulls = pullBow.get(0).animationFrames();
+        check("its pull plays as four frames", pulls.size() == 4);
+        check("starting at rest",
+                pulls.get(0) == pullBow.get(0).defaultStateIndex()
+                        && pullBow.get(0).states().get(pulls.get(0)).modelId()
+                                .equals("p:item/b"));
+        check("and drawing in the order the game would",
+                pullBow.get(0).states().get(pulls.get(1)).modelId().equals("p:item/b_0")
+                        && pullBow.get(0).states().get(pulls.get(2)).modelId()
+                                .equals("p:item/b_1")
+                        && pullBow.get(0).states().get(pulls.get(3)).modelId()
+                                .equals("p:item/b_2"));
+        // The same bow as the pack actually writes it: the whole pull once
+        // for the inventory and once for everywhere else, with a different
+        // overlay on each. Eight states, but still one pull - where an item
+        // is drawn is not a moment in time, and played as frames the two
+        // contexts walked the pull twice.
+        List<LogicalModel> twoContext = build(bows, "minecraft:bow", """
+                {"model":{"type":"minecraft:select","property":"minecraft:display_context",
+                  "cases":[{"when":"gui","model":{
+                    "type":"minecraft:condition","property":"minecraft:using_item",
+                    "on_false":{"type":"minecraft:composite","models":[
+                      {"type":"minecraft:model","model":"p:item/b"},
+                      {"type":"minecraft:model","model":"p:item/b_over"}]},
+                    "on_true":{"type":"minecraft:range_dispatch",
+                      "property":"minecraft:use_duration","scale":0.05,
+                      "fallback":{"type":"minecraft:composite","models":[
+                        {"type":"minecraft:model","model":"p:item/b_0"},
+                        {"type":"minecraft:model","model":"p:item/b_0_over"}]},
+                      "entries":[
+                        {"threshold":0.65,"model":{"type":"minecraft:composite","models":[
+                          {"type":"minecraft:model","model":"p:item/b_1"},
+                          {"type":"minecraft:model","model":"p:item/b_1_over"}]}}]}}}],
+                  "fallback":{
+                    "type":"minecraft:condition","property":"minecraft:using_item",
+                    "on_false":{"type":"minecraft:composite","models":[
+                      {"type":"minecraft:model","model":"p:item/b"},
+                      {"type":"minecraft:model","model":"p:item/b_2_over"}]},
+                    "on_true":{"type":"minecraft:range_dispatch",
+                      "property":"minecraft:use_duration","scale":0.05,
+                      "fallback":{"type":"minecraft:composite","models":[
+                        {"type":"minecraft:model","model":"p:item/b_0"},
+                        {"type":"minecraft:model","model":"p:item/b_2_over"}]},
+                      "entries":[
+                        {"threshold":0.65,"model":{"type":"minecraft:composite","models":[
+                          {"type":"minecraft:model","model":"p:item/b_1"},
+                          {"type":"minecraft:model","model":"p:item/b_2_over"}]}}]}}}}
+                """);
+        check("both contexts are kept as states",
+                twoContext.get(0).states().size() == 6);
+        check("but the pull plays once, not once per context",
+                twoContext.get(0).animationFrames().size() == 3);
+        check("and it is the context the card itself is showing",
+                twoContext.get(0).animationFrames()
+                        .contains(twoContext.get(0).defaultStateIndex()));
+
+        // An item with no stages must not start flickering between the two
+        // overlays just because it has one for the inventory and one for the
+        // world. Two states, no pull, nothing to play.
+        List<LogicalModel> stillAndMoving = build(bows, "minecraft:stick", """
+                {"model":{"type":"minecraft:select","property":"minecraft:display_context",
+                  "cases":[{"when":"gui","model":{"type":"minecraft:composite","models":[
+                    {"type":"minecraft:model","model":"p:item/b"},
+                    {"type":"minecraft:model","model":"p:item/b_over"}]}}],
+                  "fallback":{"type":"minecraft:composite","models":[
+                    {"type":"minecraft:model","model":"p:item/b"},
+                    {"type":"minecraft:model","model":"p:item/b_0_over"}]}}}
+                """);
+        check("a still and a moving overlay are two states",
+                stillAndMoving.get(0).states().size() == 2);
+        check("and not an animation between them",
+                stillAndMoving.get(0).animationFrames().isEmpty());
+
         check("a model with one state has nothing to play",
                 build(parts, "minecraft:stick", """
                         {"model":{"type":"minecraft:model","model":"p:item/part_a"}}

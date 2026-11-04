@@ -35,6 +35,7 @@ public final class DiscoveredModel {
     private final List<String> tints;
     private final int discoveryIndex;
     private final boolean hasNodeTransformation;
+    private final List<String> overlays;
 
     public DiscoveredModel(String baseItemId,
                            String definitionId,
@@ -46,6 +47,22 @@ public final class DiscoveredModel {
                            List<String> tints,
                            int discoveryIndex,
                            boolean hasNodeTransformation) {
+        this(baseItemId, definitionId, definitionArchivePath, sourcePackId, modelId,
+                leafKind, path, tints, discoveryIndex, hasNodeTransformation, List.of());
+    }
+
+    public DiscoveredModel(String baseItemId,
+                           String definitionId,
+                           String definitionArchivePath,
+                           String sourcePackId,
+                           String modelId,
+                           LeafKind leafKind,
+                           List<Selector> path,
+                           List<String> tints,
+                           int discoveryIndex,
+                           boolean hasNodeTransformation,
+                           List<String> overlays) {
+        this.overlays = List.copyOf(overlays);
         this.baseItemId = baseItemId;
         this.definitionId = definitionId;
         this.definitionArchivePath = definitionArchivePath;
@@ -80,6 +97,34 @@ public final class DiscoveredModel {
     /** e.g. {@code example:item/bows/dragon_bow}. Empty for {@link LeafKind#EMPTY}. */
     public String modelId() {
         return modelId;
+    }
+
+    /**
+     * Models drawn on top of {@link #modelId()}, in order, or empty.
+     *
+     * <p>The other members of a composite this leaf stands for. A composite's
+     * members are drawn together rather than chosen between, so one leaf
+     * carries the lot: taken apart into separate states, a pack that animates
+     * an item by laying a moving layer over a still one shows the layer
+     * instead of the item.</p>
+     */
+    public List<String> overlays() {
+        return overlays;
+    }
+
+    /**
+     * What makes this leaf a different thing from another, model-wise.
+     *
+     * <p>The model id alone is not enough once a leaf can stand for a stack:
+     * a pack that animates an item lays a moving layer over the item for the
+     * world and a still one over the same item for the inventory, so both
+     * leaves have the same base and are not the same picture.</p>
+     */
+    public String stackId() {
+        if (overlays.isEmpty()) {
+            return modelId;
+        }
+        return modelId + "+" + String.join("+", overlays);
     }
 
     public LeafKind leafKind() {

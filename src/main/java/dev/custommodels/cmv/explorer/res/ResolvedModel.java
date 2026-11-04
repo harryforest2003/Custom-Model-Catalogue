@@ -55,7 +55,55 @@ public record ResolvedModel(String modelId,
                             List<String> layers,
                             Map<String, ModelJson.Transform> transforms,
                             boolean guiLightFront,
-                            List<String> warnings) {
+                            List<String> warnings,
+                            List<ResolvedModel> overlays) {
+
+    /**
+     * The models drawn on top of this one, in order, and this one first.
+     *
+     * <p>A pack that animates an item composites a moving layer over a still
+     * one, and the game draws every member of a composite together. They are
+     * layers, not alternatives: showing one of them on its own is showing
+     * half the item, which on a pack built this way means a card of animation
+     * frames with no item under them.</p>
+     */
+    public List<ResolvedModel> allLayers() {
+        if (overlays.isEmpty()) {
+            return List.of(this);
+        }
+        List<ResolvedModel> all = new java.util.ArrayList<>(overlays.size() + 1);
+        all.add(this);
+        all.addAll(overlays);
+        return all;
+    }
+
+    /** The same model with layers laid over it. */
+    public ResolvedModel withOverlays(List<ResolvedModel> laidOver) {
+        if (laidOver.isEmpty()) {
+            return this;
+        }
+        return new ResolvedModel(modelId, archivePath, sourcePackId, exists, parentChain,
+                textureSlots, missingTextures, unresolvedSlots, translucentSlots,
+                geometryModelId, elementCount, geometryHash, generated, layers,
+                transforms, guiLightFront, warnings, List.copyOf(laidOver));
+    }
+
+    /**
+     * What a mesh built from every layer should be remembered under.
+     *
+     * <p>The model's own id alone would be the base layer's id, which two
+     * different composites over one base would share.</p>
+     */
+    public String layerKey() {
+        if (overlays.isEmpty()) {
+            return modelId;
+        }
+        StringBuilder key = new StringBuilder(modelId);
+        for (ResolvedModel over : overlays) {
+            key.append('+').append(over.modelId());
+        }
+        return key.toString();
+    }
 
     /** The display transform for a context, falling back to identity. */
     public ModelJson.Transform transform(String context) {
@@ -85,6 +133,16 @@ public record ResolvedModel(String modelId,
 
     /** Distinct texture ids used, in a stable order, for the detail panel. */
     public List<String> distinctTextures() {
-        return textureSlots.values().stream().distinct().sorted().toList();
+        if (overlays.isEmpty()) {
+            return textureSlots.values().stream().distinct().sorted().toList();
+        }
+        // Every layer's, because every layer is drawn. Missing one of these
+        // builds the mesh without a texture it needed, which is thrown away
+        // and asked for again on the next frame, for ever.
+        java.util.Set<String> all = new java.util.TreeSet<>(textureSlots.values());
+        for (ResolvedModel over : overlays) {
+            all.addAll(over.textureSlots().values());
+        }
+        return List.copyOf(all);
     }
 }

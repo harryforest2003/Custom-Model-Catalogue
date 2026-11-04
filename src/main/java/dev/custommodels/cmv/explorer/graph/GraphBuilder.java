@@ -481,7 +481,7 @@ public final class GraphBuilder {
         Map<String, DiscoveredModel> uniqueLeaves = new LinkedHashMap<>();
         List<String> merged = new ArrayList<>();
         for (DiscoveredModel leaf : leaves) {
-            String key = leaf.modelId() + "#" + stateKey(leaf);
+            String key = leaf.stackId() + "#" + stateKey(leaf);
             DiscoveredModel existing = uniqueLeaves.putIfAbsent(key, leaf);
             if (existing != null) {
                 exactDuplicates++;
@@ -493,9 +493,9 @@ public final class GraphBuilder {
         // they become one state carrying both conditions.
         Map<String, DiscoveredModel> byModel = new LinkedHashMap<>();
         for (DiscoveredModel leaf : uniqueLeaves.values()) {
-            DiscoveredModel existing = byModel.get(leaf.modelId());
+            DiscoveredModel existing = byModel.get(leaf.stackId());
             if (existing == null) {
-                byModel.put(leaf.modelId(), leaf);
+                byModel.put(leaf.stackId(), leaf);
                 continue;
             }
             stateDuplicates++;
@@ -503,7 +503,7 @@ public final class GraphBuilder {
             // Keep whichever route is closest to the item's resting state, so
             // the surviving label is the more useful one.
             if (leaf.activationCost() < existing.activationCost()) {
-                byModel.put(leaf.modelId(), leaf);
+                byModel.put(leaf.stackId(), leaf);
             }
         }
         if (byModel.isEmpty()) {
@@ -633,7 +633,7 @@ public final class GraphBuilder {
             while (!usedLabels.add(unique)) {
                 unique = label + " " + suffix++;
             }
-            states.add(new ModelState(unique, derived, leaf, resolver.resolve(leaf.modelId())));
+            states.add(new ModelState(unique, derived, leaf, resolveLayers(leaf)));
         }
         return states;
     }
@@ -659,6 +659,31 @@ public final class GraphBuilder {
      * but the inventory shows a different one. Failing that, the state reached
      * through the fewest active conditions is the item at rest.</p>
      */
+    /**
+     * The leaf's model, carrying whatever is drawn on top of it.
+     *
+     * <p>Resolved here rather than by the resolver, because which models go
+     * together is the definition's business and the resolver only ever sees
+     * one id at a time.</p>
+     */
+    private ResolvedModel resolveLayers(DiscoveredModel leaf) {
+        ResolvedModel base = resolver.resolve(leaf.modelId());
+        if (leaf.overlays().isEmpty()) {
+            return base;
+        }
+        List<ResolvedModel> over = new ArrayList<>(leaf.overlays().size());
+        for (String id : leaf.overlays()) {
+            ResolvedModel layer = resolver.resolve(id);
+            // A layer that is not there is left out rather than failing the
+            // item: the base is still the item, and the missing file is
+            // already reported against the model it belongs to.
+            if (layer.exists() && !layer.isEmpty()) {
+                over.add(layer);
+            }
+        }
+        return base.withOverlays(over);
+    }
+
     private static int pickDefaultState(List<ModelState> states) {
         for (int i = 0; i < states.size(); i++) {
             for (Selector step : states.get(i).steps()) {

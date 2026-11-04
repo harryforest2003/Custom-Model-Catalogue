@@ -725,13 +725,13 @@ public final class PreviewService {
      */
     private float[] framedBox(LogicalModel model, int stateIndex, int size,
                               ResolvedModel resolved) {
-        float[] known = itemBoxes.get(resolved.modelId());
+        float[] known = itemBoxes.get(resolved.layerKey());
         if (known != null) {
             return known;
         }
         Mesh mesh;
         synchronized (meshes) {
-            mesh = meshes.get(resolved.modelId());
+            mesh = meshes.get(resolved.layerKey());
         }
         if (mesh == null) {
             // Nothing measures a model that has not been built, so ask for the
@@ -742,7 +742,7 @@ public final class PreviewService {
             return null;
         }
         float[] measured = Rasterizer.boundsOf(mesh, resolved.transform("fixed"));
-        itemBoxes.put(resolved.modelId(), measured);
+        itemBoxes.put(resolved.layerKey(), measured);
         return measured;
     }
 
@@ -1358,7 +1358,7 @@ public final class PreviewService {
     private Mesh meshFor(ResolvedModel resolved, ResourceSource resources) {
         decodePending(resolved, resources);
         synchronized (meshes) {
-            Mesh cached = meshes.get(resolved.modelId());
+            Mesh cached = meshes.get(resolved.layerKey());
             if (cached != null) {
                 return cached;
             }
@@ -1373,8 +1373,8 @@ public final class PreviewService {
             return null;
         }
         synchronized (meshes) {
-            if (!meshes.containsKey(resolved.modelId())) {
-                meshes.put(resolved.modelId(), built);
+            if (!meshes.containsKey(resolved.layerKey())) {
+                meshes.put(resolved.layerKey(), built);
                 meshBytes += built.approximateBytes();
                 evictMeshes();
             }

@@ -205,12 +205,69 @@ public final class ItemDefinitionParser {
                 return;
             }
             JsonArray array = models.getAsJsonArray();
+            List<String> stacked = plainStack(array);
+            if (stacked != null) {
+                // Layers, not alternatives. The game draws every member of a
+                // composite together, so this is one thing with several
+                // models in it rather than several things to choose between.
+                // Split into one state each, a pack that animates an item by
+                // laying a moving layer over a still one gives a card of
+                // animation frames with no item underneath them.
+                emitStack(stacked, tintsOf(object));
+                return;
+            }
+            // A member that is itself a branch cannot be folded into one
+            // leaf, because which model it stands for is not yet decided.
+            // Those keep the older reading: a layer apiece.
             for (int i = 0; i < array.size(); i++) {
                 push(new Selector(Selector.Kind.COMPOSITE, "", List.of(),
                         Float.NaN, 1.0F, Selector.Branch.MEMBER, i));
                 walk(array.get(i), depth + 1);
                 path.removeLast();
             }
+        }
+
+        /**
+         * The composite's members as plain model ids, or null when any of
+         * them is something else.
+         */
+        private List<String> plainStack(JsonArray array) {
+            if (array.isEmpty()) {
+                return null;
+            }
+            List<String> ids = new ArrayList<>(array.size());
+            for (JsonElement element : array) {
+                if (!element.isJsonObject()) {
+                    return null;
+                }
+                JsonObject member = element.getAsJsonObject();
+                if (!"model".equals(shortType(member.get("type")))) {
+                    return null;
+                }
+                String id = string(member.get("model"));
+                if (id == null || id.isEmpty()) {
+                    return null;
+                }
+                // A tinted layer is not merely laid over the one below: its
+                // colour comes from the stack it is in, which this cannot
+                // carry. Left as separate states, where the tint is reported.
+                if (!tintsOf(member).isEmpty()) {
+                    return null;
+                }
+                ids.add(id);
+            }
+            return ids;
+        }
+
+        /** One leaf standing for a whole stack of layers. */
+        private void emitStack(List<String> ids, List<String> tints) {
+            if (out.size() >= MAX_LEAVES_PER_FILE) {
+                return;
+            }
+            out.add(new DiscoveredModel(baseItemId, definitionId, archivePath, sourcePackId,
+                    ids.get(0), DiscoveredModel.LeafKind.MODEL, new ArrayList<>(path),
+                    tints, discoveryIndex++, transformationDepth > 0,
+                    ids.subList(1, ids.size())));
         }
 
         private void walkCondition(JsonObject object, int depth) {
